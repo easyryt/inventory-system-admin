@@ -21,7 +21,7 @@ export default async function PrintingJobsPage() {
 
   if (token) {
     try {
-      const res = await fetch("http://localhost:5000/api/products", {
+      const res = await fetch("https://inventory-system-ecew.onrender.com/api/products", {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
       });

@@ -20,11 +20,11 @@ type BarcodesByDesign = Record<string, BarcodeRow[]>;
 
 async function fetchProductAndBarcodes(productId: string, token: string) {
   const [productRes, barcodesRes] = await Promise.all([
-    fetch(`http://localhost:5000/api/products/${productId}`, {
+    fetch(`https://inventory-system-ecew.onrender.com/api/products/${productId}`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     }),
-    fetch(`http://localhost:5000/api/barcodes/manage/${productId}`, {
+    fetch(`https://inventory-system-ecew.onrender.com/api/barcodes/manage/${productId}`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     }),

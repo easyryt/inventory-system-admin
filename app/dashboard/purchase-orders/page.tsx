@@ -17,7 +17,7 @@ export default async function PurchaseOrdersPage() {
 
   if (token) {
     const res = await fetch(
-      "http://localhost:5000/api/dashboard/inventory-products",
+      "https://inventory-system-ecew.onrender.com/api/dashboard/inventory-products",
       {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",

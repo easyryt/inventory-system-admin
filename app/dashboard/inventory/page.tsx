@@ -44,7 +44,7 @@ export default async function InventoryIndexPage() {
     try {
       // 1) High-level inventory numbers per product
       const productsRes = await fetch(
-        "http://localhost:5000/api/dashboard/inventory-products",
+        "https://inventory-system-ecew.onrender.com/api/dashboard/inventory-products",
         {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
@@ -63,7 +63,7 @@ export default async function InventoryIndexPage() {
         products.map(async (p) => {
           try {
             const invRes = await fetch(
-              `http://localhost:5000/api/inventory/with-barcodes/${p.id}`,
+              `https://inventory-system-ecew.onrender.com/api/inventory/with-barcodes/${p.id}`,
               {
                 headers: { Authorization: `Bearer ${token}` },
                 cache: "no-store",
@@ -86,7 +86,7 @@ export default async function InventoryIndexPage() {
 
       // 3) Latest supplier info per product
       const supRes = await fetch(
-        "http://localhost:5000/api/dashboard/inventory-supplier",
+        "https://inventory-system-ecew.onrender.com/api/dashboard/inventory-supplier",
         {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
