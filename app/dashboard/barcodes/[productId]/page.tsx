@@ -50,11 +50,11 @@ async function fetchProductAndBarcodes(productId: string, token: string) {
 export default async function ManageBarcodesPage({
   params,
 }: {
-  params: { productId: string };
+  params: Promise<{ productId: string }>;
 }) {
-  console.log("ManageBarcodesPage params:", params); // <– TEMP LOG
+  // ✅ params is a Promise in Next.js 16 — unwrap it once
+  const { productId } = await params;
 
-  const { productId } = await params; // ⬅️ important
   const cookieStore = await cookies();
   const token = cookieStore.get("token")?.value;
 
