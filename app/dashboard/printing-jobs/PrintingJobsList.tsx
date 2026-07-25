@@ -23,10 +23,7 @@ type JobStatus = "PENDING" | "COMPLETED" | "CANCELLED";
 
 const getJobId = (job: PrintingJob) => job._id || job.id || "";
 
-const STATUS_META: Record<
-  JobStatus,
-  { label: string; badge: string }
-> = {
+const STATUS_META: Record<JobStatus, { label: string; badge: string }> = {
   PENDING: {
     label: "Pending",
     badge: "border-amber-200 bg-amber-50 text-amber-700",
@@ -50,7 +47,9 @@ const FILTER_OPTIONS: { value: StatusFilter; label: string }[] = [
 
 const statusBadgeClass = (status: string) => {
   const key = status as JobStatus;
-  return STATUS_META[key]?.badge || "border-slate-200 bg-slate-50 text-slate-600";
+  return (
+    STATUS_META[key]?.badge || "border-slate-200 bg-slate-50 text-slate-600"
+  );
 };
 
 const formatDateTime = (value: string) => {
@@ -78,7 +77,8 @@ export default function PrintingJobsList() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  const showSuccess = (msg: string) => setToast({ type: "success", message: msg });
+  const showSuccess = (msg: string) =>
+    setToast({ type: "success", message: msg });
   const showError = (msg: string) => setToast({ type: "error", message: msg });
 
   const loadJobs = async () => {
@@ -100,7 +100,9 @@ export default function PrintingJobsList() {
         return;
       }
 
-      const jobsArr = Array.isArray(data?.jobs) ? (data.jobs as PrintingJob[]) : [];
+      const jobsArr = Array.isArray(data?.jobs)
+        ? (data.jobs as PrintingJob[])
+        : [];
       setJobs(jobsArr);
     } catch {
       const msg = "Something went wrong while loading printing jobs";
@@ -168,7 +170,7 @@ export default function PrintingJobsList() {
 
     const quantityInput = window.prompt(
       `How many barcodes to generate for ${designCode}?`,
-      String(item.quantity || 1)
+      String(item.quantity || 1),
     );
 
     const quantityNum = Number(quantityInput);
@@ -226,7 +228,7 @@ export default function PrintingJobsList() {
       }
 
       setJobs((prev) =>
-        prev.map((j) => (getJobId(j) === id ? { ...j, status: newStatus } : j))
+        prev.map((j) => (getJobId(j) === id ? { ...j, status: newStatus } : j)),
       );
       showSuccess("Status updated");
     } catch {
@@ -255,7 +257,9 @@ export default function PrintingJobsList() {
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-sm font-semibold text-slate-900">Printing jobs history</h2>
+          <h2 className="text-sm font-semibold text-slate-900">
+            Printing jobs history
+          </h2>
           <p className="text-xs text-slate-500">
             Clean overview of jobs, status updates, and barcode actions.
           </p>
@@ -310,12 +314,24 @@ export default function PrintingJobsList() {
             <table className="min-w-full text-[11px]">
               <thead className="sticky top-0 bg-slate-50">
                 <tr>
-                  <th className="px-3 py-2 text-left font-medium text-slate-500">Product</th>
-                  <th className="px-3 py-2 text-left font-medium text-slate-500">Designs</th>
-                  <th className="px-3 py-2 text-left font-medium text-slate-500">Total</th>
-                  <th className="px-3 py-2 text-left font-medium text-slate-500">Status</th>
-                  <th className="px-3 py-2 text-left font-medium text-slate-500">Created</th>
-                  <th className="px-3 py-2 text-right font-medium text-slate-500">Actions</th>
+                  <th className="px-3 py-2 text-left font-medium text-slate-500">
+                    Product
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium text-slate-500">
+                    Designs
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium text-slate-500">
+                    Total
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium text-slate-500">
+                    Status
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium text-slate-500">
+                    Created
+                  </th>
+                  <th className="px-3 py-2 text-right font-medium text-slate-500">
+                    Actions
+                  </th>
                 </tr>
               </thead>
 
@@ -329,7 +345,9 @@ export default function PrintingJobsList() {
 
                   return (
                     <tr key={id || job.createdAt} className="align-top">
-                      <td className="px-3 py-3 text-slate-800">{productName}</td>
+                      <td className="px-3 py-3 text-slate-800">
+                        {productName}
+                      </td>
 
                       <td className="px-3 py-3">
                         <div className="space-y-1">
@@ -349,7 +367,9 @@ export default function PrintingJobsList() {
                                 </div>
                                 <button
                                   type="button"
-                                  onClick={() => handleGenerateBarcodes(job, item)}
+                                  onClick={() =>
+                                    handleGenerateBarcodes(job, item)
+                                  }
                                   className="text-[10px] font-medium text-blue-700 hover:underline"
                                 >
                                   Generate Barcodes
@@ -357,7 +377,9 @@ export default function PrintingJobsList() {
                               </div>
                             ))
                           ) : (
-                            <span className="text-[10px] text-slate-400">No items</span>
+                            <span className="text-[10px] text-slate-400">
+                              No items
+                            </span>
                           )}
 
                           {job.notes && (
@@ -368,7 +390,9 @@ export default function PrintingJobsList() {
                         </div>
                       </td>
 
-                      <td className="px-3 py-3 text-slate-700">{job.totalDemand}</td>
+                      <td className="px-3 py-3 text-slate-700">
+                        {job.totalDemand}
+                      </td>
 
                       <td className="px-3 py-3">
                         <div className="flex flex-col gap-2">
@@ -385,7 +409,10 @@ export default function PrintingJobsList() {
                             value={job.status}
                             disabled={!!updatingId}
                             onChange={(e) =>
-                              handleStatusChange(e.target.value as JobStatus)
+                              handleStatusChange(
+                                job,
+                                e.target.value as JobStatus,
+                              )
                             }
                             className="w-fit rounded-lg border border-slate-200 px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-100 focus:border-blue-500 disabled:opacity-60"
                           >
