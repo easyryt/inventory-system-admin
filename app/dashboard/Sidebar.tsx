@@ -1,8 +1,7 @@
-// app/dashboard/Sidebar.tsx
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 type NavLink = {
   label: string;
@@ -30,6 +29,12 @@ function isActive(pathname: string, link: NavLink) {
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+
+  const handleLogout = () => {
+    document.cookie = "token=; Max-Age=0; path=/";
+    router.replace("/login");
+  };
 
   return (
     <aside className="fixed left-0 top-0 hidden h-screen w-64 border-r border-slate-200 bg-white lg:flex lg:flex-col">
@@ -63,6 +68,15 @@ export default function Sidebar() {
           );
         })}
       </nav>
+
+      <div className="border-t border-slate-200 p-4">
+        <button
+          onClick={handleLogout}
+          className="flex w-full items-center justify-center rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-100"
+        >
+          Logout
+        </button>
+      </div>
     </aside>
   );
 }
