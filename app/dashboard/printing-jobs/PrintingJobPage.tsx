@@ -1,322 +1,273 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 type Product = {
   _id: string;
   name: string;
-  categoryId: {
-    _id: string;
-    name: string;
-  };
   skuBase: string;
 };
 
-type PrintingItem = {
+type ProductDesign = {
+  _id: string;
+  name: string;
+  mode: string;
   designCode: string;
-  quantity: string;
 };
 
 type Props = {
   products: Product[];
 };
 
-const emptyRow = (): PrintingItem => ({ designCode: "", quantity: "" });
-
-const STATUS_OPTIONS = [
-  { value: "PENDING", label: "PENDING" },
-  { value: "COMPLETED", label: "COMPLETED" },
-  { value: "CANCELLED", label: "CANCELLED" },
-] as const;
+const getErrorMessage = async (res: Response, fallback: string) => {
+  const data = await res.json().catch(() => ({}));
+  return data.message || fallback;
+};
 
 export default function PrintingJobPage({ products }: Props) {
   const [productId, setProductId] = useState("");
-  const [items, setItems] = useState<PrintingItem[]>([emptyRow()]);
-  const [status, setStatus] =
-    useState<(typeof STATUS_OPTIONS)[number]["value"]>("COMPLETED");
+  const [designId, setDesignId] = useState("");
+  const [quantity, setQuantity] = useState("");
+  const [status, setStatus] = useState("PENDING");
   const [notes, setNotes] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+
+  const [designs, setDesigns] = useState<ProductDesign[]>([]);
+  const [loadingDesigns, setLoadingDesigns] = useState(false);
+  const [saving, setSaving] = useState(false);
+
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  const [toast, setToast] = useState<{
-    type: "success" | "error";
-    message: string;
-  } | null>(null);
-
   useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 3000);
-    return () => clearTimeout(t);
-  }, [toast]);
+    const loadDesigns = async () => {
+      setDesignId("");
+      setDesigns([]);
+      setError("");
 
-  const showSuccess = (msg: string) => setToast({ type: "success", message: msg });
-  const showError = (msg: string) => setToast({ type: "error", message: msg });
+      if (!productId) return;
 
-  const selectedProduct = useMemo(
-    () => products.find((p) => p._id === productId),
-    [products, productId]
-  );
+      try {
+        setLoadingDesigns(true);
 
-  const updateItem = (index: number, field: keyof PrintingItem, value: string) => {
-    setItems((prev) =>
-      prev.map((it, i) => (i === index ? { ...it, [field]: value } : it))
-    );
-  };
+        const res = await fetch(
+          `/api/printing-jobs/${productId}?kind=designs`,
+          { cache: "no-store" }
+        );
 
-  const addRow = () => setItems((prev) => [...prev, emptyRow()]);
+        const data = await res.json().catch(() => ({}));
 
-  const removeRow = (index: number) => {
-    setItems((prev) => {
-      const next = prev.filter((_, i) => i !== index);
-      return next.length ? next : [emptyRow()];
-    });
-  };
+        if (!res.ok) {
+          throw new Error(data.message || "Could not load model/design list");
+        }
 
-  const resetForm = () => {
-    setProductId("");
-    setItems([emptyRow()]);
-    setStatus("COMPLETED");
-    setNotes("");
-  };
+        setDesigns(data.designs || []);
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Could not load model/design list"
+        );
+      } finally {
+        setLoadingDesigns(false);
+      }
+    };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+    loadDesigns();
+  }, [productId]);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
     setError("");
     setSuccess("");
 
-    if (!productId) {
-      const msg = "Select a product for the printing job";
-      setError(msg);
-      showError(msg);
+    if (!productId || !designId || !quantity) {
+      setError("Please select product, model/design, and quantity.");
       return;
     }
 
-    const cleaned = items
-      .map((it) => ({
-        designCode: it.designCode.trim().toUpperCase(),
-        quantity: Number(it.quantity),
-      }))
-      .filter((it) => it.designCode && !Number.isNaN(it.quantity) && it.quantity > 0);
-
-    if (cleaned.length === 0) {
-      const msg = "Add at least one design with a positive quantity";
-      setError(msg);
-      showError(msg);
+    if (Number(quantity) < 1) {
+      setError("Quantity must be at least 1.");
       return;
     }
-
-    const payload: {
-      productId: string;
-      items: { designCode: string; quantity: number }[];
-      status: "PENDING" | "COMPLETED" | "CANCELLED";
-      notes?: string;
-    } = {
-      productId,
-      items: cleaned,
-      status,
-    };
-
-    if (notes.trim()) payload.notes = notes.trim();
 
     try {
-      setSubmitting(true);
+      setSaving(true);
 
       const res = await fetch("/api/printing-jobs", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          productId,
+          designId,
+          quantity: Number(quantity),
+          status,
+          notes,
+        }),
       });
 
-      const data = await res.json().catch(() => ({}));
-
       if (!res.ok) {
-        const msg = data?.message || "Failed to create printing job";
-        setError(msg);
-        showError(msg);
-        return;
+        throw new Error(
+          await getErrorMessage(res, "Could not create printing job")
+        );
       }
 
-      setSuccess("Printing job created successfully.");
-      showSuccess("Printing job created.");
-      resetForm();
+      setSuccess(
+        status === "COMPLETED"
+          ? "Printing completed and stock added to inventory."
+          : "Printing job created successfully."
+      );
+
+      setProductId("");
+      setDesignId("");
+      setQuantity("");
+      setStatus("PENDING");
+      setNotes("");
+      setDesigns([]);
+
+      window.dispatchEvent(new Event("printing-jobs:changed"));
     } catch (err) {
-      console.error("Create printing job error", err);
-      const msg = "Something went wrong while creating the printing job";
-      setError(msg);
-      showError(msg);
+      setError(
+        err instanceof Error ? err.message : "Could not create printing job"
+      );
     } finally {
-      setSubmitting(false);
+      setSaving(false);
     }
   };
 
   return (
-    <section className="relative rounded-2xl border border-slate-200 bg-white p-4 space-y-4">
-      {toast && (
-        <div className="absolute right-4 top-4 z-10">
-          <div
-            className={
-              "rounded-xl px-3 py-2 text-xs shadow-sm border " +
-              (toast.type === "success"
-                ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                : "bg-red-50 border-red-200 text-red-700")
-            }
-          >
-            {toast.message}
-          </div>
+    <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h2 className="mb-5 text-base font-semibold text-slate-800">
+        Create Printing Job
+      </h2>
+
+      {error && (
+        <div className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700">
+          {error}
         </div>
       )}
 
-      <header className="flex flex-col gap-1 pr-24">
-        <h2 className="text-sm font-semibold text-slate-900">New printing job</h2>
-        <p className="text-xs text-slate-500">
-          Pick a product, add design codes, and set quantities. RAW stock will be deducted automatically.
-        </p>
-      </header>
+      {success && (
+        <div className="mb-4 rounded-md bg-emerald-50 p-3 text-sm text-emerald-700">
+          {success}
+        </div>
+      )}
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="rounded-xl border border-slate-100 p-3 space-y-4">
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="md:col-span-2">
-              <label className="block text-xs font-medium text-slate-600 mb-1">
-                Product
-              </label>
-              <select
-                value={productId}
-                onChange={(e) => setProductId(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
-              >
-                <option value="">Select product</option>
-                {products.map((p) => (
-                  <option key={p._id} value={p._id}>
-                    {p.name} ({p.categoryId?.name})
-                  </option>
-                ))}
-              </select>
+      <form
+        onSubmit={handleSubmit}
+        className="grid grid-cols-1 gap-4 md:grid-cols-2"
+      >
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">
+            Product *
+          </label>
 
-              {selectedProduct && (
-                <p className="mt-1 text-[11px] text-slate-500">
-                  SKU base: {selectedProduct.skuBase}
-                </p>
-              )}
-            </div>
+          <select
+            value={productId}
+            onChange={(event) => setProductId(event.target.value)}
+            className="w-full rounded-md border border-slate-300 bg-white p-2.5 text-sm"
+            required
+          >
+            <option value="">Select product</option>
 
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">
-                Initial status
-              </label>
-              <select
-                value={status}
-                onChange={(e) =>
-                  setStatus(e.target.value as "PENDING" | "COMPLETED" | "CANCELLED")
-                }
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
-              >
-                {STATUS_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-[10px] text-slate-400">
-                You can change this later from the jobs list.
-              </p>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Notes (optional)
-            </label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
-              placeholder="Any special instructions or comments for this job"
-            />
-          </div>
-
-          <div className="border-t border-slate-100 pt-3 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-[11px] font-medium text-slate-600">
-                Designs in this job
-              </h3>
-              <button
-                type="button"
-                onClick={addRow}
-                className="text-[11px] font-medium text-blue-700 hover:underline"
-              >
-                + Add design
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              {items.map((it, index) => (
-                <div
-                  key={index}
-                  className="grid gap-2 rounded-lg border border-slate-100 p-2 md:grid-cols-[1fr_120px_auto]"
-                >
-                  <div>
-                    <label className="mb-1 block text-[11px] font-medium text-slate-600">
-                      Design code
-                    </label>
-                    <input
-                      type="text"
-                      value={it.designCode}
-                      onChange={(e) => updateItem(index, "designCode", e.target.value)}
-                      placeholder="e.g. BUTTERFLY"
-                      className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] uppercase focus:outline-none focus:ring-1 focus:ring-blue-100 focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-[11px] font-medium text-slate-600">
-                      Qty
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      value={it.quantity}
-                      onChange={(e) => updateItem(index, "quantity", e.target.value)}
-                      className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-100 focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div className="flex items-end">
-                    <button
-                      type="button"
-                      onClick={() => removeRow(index)}
-                      className="text-[11px] font-medium text-red-600 hover:underline"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+            {products.map((product) => (
+              <option key={product._id} value={product._id}>
+                {product.name}
+                {product.skuBase ? ` (${product.skuBase})` : ""}
+              </option>
+            ))}
+          </select>
         </div>
 
-        {error && (
-          <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
-            {error}
-          </div>
-        )}
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">
+            Model / Design *
+          </label>
 
-        {success && (
-          <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-            {success}
-          </div>
-        )}
+          <select
+            value={designId}
+            disabled={!productId || loadingDesigns}
+            onChange={(event) => setDesignId(event.target.value)}
+            className="w-full rounded-md border border-slate-300 bg-white p-2.5 text-sm disabled:bg-slate-100"
+            required
+          >
+            <option value="">
+              {!productId
+                ? "Select product first"
+                : loadingDesigns
+                  ? "Loading designs..."
+                  : "Select model/design"}
+            </option>
 
-        <div className="flex justify-end">
+            {designs.map((design) => (
+              <option key={design._id} value={design._id}>
+                {design.name} — {design.mode} ({design.designCode})
+              </option>
+            ))}
+          </select>
+
+          {productId && !loadingDesigns && designs.length === 0 && (
+            <p className="mt-1 text-xs text-red-600">
+              No active model/design found for this product.
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">
+            Quantity *
+          </label>
+
+          <input
+            type="number"
+            min="1"
+            value={quantity}
+            onChange={(event) => setQuantity(event.target.value)}
+            placeholder="Enter quantity"
+            className="w-full rounded-md border border-slate-300 p-2.5 text-sm"
+            required
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">
+            Initial Status *
+          </label>
+
+          <select
+            value={status}
+            onChange={(event) => setStatus(event.target.value)}
+            className="w-full rounded-md border border-slate-300 bg-white p-2.5 text-sm"
+          >
+            <option value="PENDING">Pending</option>
+            <option value="COMPLETED">Completed</option>
+            <option value="CANCELLED">Cancelled</option>
+          </select>
+        </div>
+
+        <div className="md:col-span-2">
+          <label className="mb-1 block text-sm font-medium text-slate-700">
+            Notes <span className="font-normal text-slate-400">(optional)</span>
+          </label>
+
+          <textarea
+            rows={3}
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
+            placeholder="Example: Blue ink required"
+            className="w-full rounded-md border border-slate-300 p-2.5 text-sm"
+          />
+        </div>
+
+        <div className="md:col-span-2">
           <button
             type="submit"
-            disabled={submitting}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-60"
+            disabled={saving || !designId}
+            className="rounded-md bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-400"
           >
-            {submitting ? "Creating printing job..." : "Create printing job"}
+            {saving ? "Saving..." : "Create Printing Job"}
           </button>
         </div>
       </form>

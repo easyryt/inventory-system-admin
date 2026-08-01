@@ -1,9 +1,9 @@
-// app/dashboard/inventory/InventoryList.tsx
 "use client";
 
+import { useState, useMemo } from "react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
 
+// ---------- Types ----------
 type InventoryRow = {
   _id: string;
   productId: string;
@@ -13,6 +13,9 @@ type InventoryRow = {
   minThreshold: number;
   isActive: boolean;
   barcodes?: string[];
+  totalBarcodes?: number;
+  availableBarcodes?: number;
+  usedBarcodes?: number;
 };
 
 type Product = {
@@ -31,270 +34,517 @@ type SupplierInfo = {
   status: "CREATED" | "PARTIAL" | "VERIFIED";
 };
 
-type SupplierByProduct = Record<string, SupplierInfo>;
+type LowStockItem = {
+  _id: string;
+  productId: string;
+  productName: string;
+  designCode: string;
+  designName: string;
+  mode: string;
+  quantity: number;
+  minThreshold: number;
+  deficit: number;
+};
 
 type Props = {
   products: Product[];
   inventoriesByProduct: Record<string, InventoryRow[]>;
-  supplierByProduct: SupplierByProduct;
+  supplierByProduct: Record<string, SupplierInfo>;
+  lowStockItems?: LowStockItem[];       // 👈 optional – for the low‑stock button
 };
 
-export default function InventoryList({
-  products = [],
-  inventoriesByProduct = {},
-  supplierByProduct = {},
-}: Props) {
-  const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState<"ALL" | "RAW" | "PRINTED">(
-    "ALL"
+// ---------- Helper: badge for inventory type ----------
+function TypeBadge({ type }: { type: "RAW" | "PRINTED" }) {
+  return (
+    <span
+      className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${
+        type === "RAW"
+          ? "bg-amber-100 text-amber-800"
+          : "bg-emerald-100 text-emerald-800"
+      }`}
+    >
+      {type}
+    </span>
   );
-  const [lowStockOnly, setLowStockOnly] = useState(false);
+}
 
+// ---------- Main component ----------
+export default function InventoryList({
+  products,
+  inventoriesByProduct,
+  supplierByProduct,
+  lowStockItems = [],           // default empty
+}: Props) {
+  // ----- Filter states -----
+  const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"ALL" | "RAW" | "PRINTED">("ALL");
+  const [showLowStockOnly, setShowLowStockOnly] = useState(false);
+
+  // ----- Threshold editing states -----
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState<string>("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [successId, setSuccessId] = useState<string | null>(null);
+
+  // ----- Derived: distinct categories -----
+  const categories = useMemo(() => {
+    const set = new Set(products.map((p) => p.categoryName).filter(Boolean));
+    return Array.from(set).sort();
+  }, [products]);
+
+  // ----- Filtered & sorted products -----
   const filteredProducts = useMemo(() => {
-    if (!Array.isArray(products)) return [];
+    let result = products;
 
-    const q = search.trim().toLowerCase();
-
-    return products.filter((p) => {
-      const inv = inventoriesByProduct[p.id] || [];
-
-      // search by product name, id, supplier name, notes
-      if (q) {
-        const supplier = supplierByProduct[p.id];
-        const supplierText = supplier
-          ? `${supplier.supplierName} ${supplier.notes}`.toLowerCase()
-          : "";
-        const match =
-          p.name.toLowerCase().includes(q) ||
-          p.id.toLowerCase().includes(q) ||
-          supplierText.includes(q);
-        if (!match) return false;
-      }
-
-      // type filter
-      if (typeFilter !== "ALL") {
-        const hasType = inv.some((row) => row.type === typeFilter);
-        if (!hasType) return false;
-      }
-
-      // low stock filter: RAW qty <= minThreshold (and > 0)
-      if (lowStockOnly) {
-        const rawRows = inv.filter((row) => row.type === "RAW");
-        const low = rawRows.some(
-          (row) => row.quantity > 0 && row.quantity <= row.minThreshold
+    // Search by product name or design codes inside its rows
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter((product) => {
+        const rows = inventoriesByProduct[product.id] || [];
+        const matchesName = product.name.toLowerCase().includes(q);
+        const matchesDesign = rows.some((row) =>
+          row.designCode?.toLowerCase().includes(q)
         );
-        if (!low) return false;
+        return matchesName || matchesDesign;
+      });
+    }
+
+    // Category filter
+    if (categoryFilter) {
+      result = result.filter((p) => p.categoryName === categoryFilter);
+    }
+
+    // Type filter & low‑stock filter
+    if (typeFilter !== "ALL" || showLowStockOnly) {
+      result = result.filter((product) => {
+        const rows = inventoriesByProduct[product.id] || [];
+
+        if (typeFilter !== "ALL") {
+          const hasType = rows.some((row) => row.type === typeFilter);
+          if (!hasType) return false;
+        }
+
+        if (showLowStockOnly) {
+          const belowThreshold = rows.some(
+            (row) => row.quantity <= row.minThreshold && row.minThreshold > 0
+          );
+          if (!belowThreshold) return false;
+        }
+
+        return true;
+      });
+    }
+
+    // Sort alphabetically by product name
+    return result.sort((a, b) => a.name.localeCompare(b.name));
+  }, [
+    products,
+    search,
+    categoryFilter,
+    typeFilter,
+    showLowStockOnly,
+    inventoriesByProduct,
+  ]);
+
+  // ----- Threshold editing handlers -----
+  const startEdit = (row: InventoryRow) => {
+    setEditingId(row._id);
+    setEditValue(String(row.minThreshold ?? 0));
+    setError(null);
+    setSuccessId(null);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditValue("");
+    setError(null);
+  };
+
+  const saveThreshold = async (rowId: string) => {
+    const parsed = Number(editValue);
+    if (isNaN(parsed) || parsed < 0) {
+      setError("Must be a non-negative number");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+
+    try {
+      const res = await fetch(`/api/inventory/threshold/${rowId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ minThreshold: parsed }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.message || "Failed to update threshold");
       }
 
-      return true;
-    });
-  }, [products, inventoriesByProduct, supplierByProduct, search, typeFilter, lowStockOnly]);
+      setSuccessId(rowId);
+      setEditingId(null);
+    } catch (err: any) {
+      setError(err.message || "Something went wrong");
+    } finally {
+      setSaving(false);
+      if (successId) setTimeout(() => setSuccessId(null), 2000);
+    }
+  };
 
-  if (!products || products.length === 0) {
-    return (
-      <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <p className="text-xs text-slate-400">
-          No products found. Create a product first.
-        </p>
-      </section>
-    );
-  }
+  const handleKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    rowId: string
+  ) => {
+    if (e.key === "Enter") saveThreshold(rowId);
+    if (e.key === "Escape") cancelEdit();
+  };
 
+  // ----- Render -----
   return (
     <div className="space-y-4">
-      {/* search + filters */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div className="flex-1">
-          <label className="block text-[11px] font-medium text-slate-600 mb-1">
-            Search (product, ID, supplier, notes)
+      {/* ---------- FILTER BAR ---------- */}
+      <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">
+        {/* Search */}
+        <div className="min-w-[180px] flex-1">
+          <label className="mb-1 block text-[11px] font-medium text-slate-500">
+            Search
           </label>
           <input
             type="text"
+            placeholder="Product name or design code…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="e.g. iPhone, ABC Supplier, urgent"
-            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
         </div>
-        <div className="flex gap-3">
-          <div>
-            <label className="block text-[11px] font-medium text-slate-600 mb-1">
-              Type
-            </label>
-            <select
-              value={typeFilter}
-              onChange={(e) =>
-                setTypeFilter(e.target.value as "ALL" | "RAW" | "PRINTED")
-              }
-              className="rounded-lg border border-slate-200 px-2 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
-            >
-              <option value="ALL">All</option>
-              <option value="RAW">RAW only</option>
-              <option value="PRINTED">PRINTED only</option>
-            </select>
-          </div>
-          <div className="mt-5 flex items-center gap-1">
-            <input
-              id="low-stock-only"
-              type="checkbox"
-              checked={lowStockOnly}
-              onChange={(e) => setLowStockOnly(e.target.checked)}
-              className="h-3 w-3 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-            />
-            <label
-              htmlFor="low-stock-only"
-              className="text-[11px] text-slate-600"
-            >
-              Low stock only
-            </label>
-          </div>
+
+        {/* Category */}
+        <div>
+          <label className="mb-1 block text-[11px] font-medium text-slate-500">
+            Category
+          </label>
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="">All categories</option>
+            {categories.map((cat) => (
+              <option key={cat} value={cat}>
+                {cat}
+              </option>
+            ))}
+          </select>
         </div>
+
+        {/* Type */}
+        <div>
+          <label className="mb-1 block text-[11px] font-medium text-slate-500">
+            Inventory type
+          </label>
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value as any)}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="ALL">All types</option>
+            <option value="RAW">RAW only</option>
+            <option value="PRINTED">PRINTED only</option>
+          </select>
+        </div>
+
+        {/* Low stock toggle + dedicated page button */}
+        <div className="flex items-center gap-2 self-end pb-2">
+          <input
+            id="low-stock"
+            type="checkbox"
+            checked={showLowStockOnly}
+            onChange={(e) => setShowLowStockOnly(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+          />
+          <label
+            htmlFor="low-stock"
+            className="text-xs text-slate-600 cursor-pointer"
+          >
+            Below threshold only
+          </label>
+
+          
+            <Link
+              href="/dashboard/inventory/low-stock"
+              className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700 hover:bg-red-100"
+            >
+              ⚠️ Low Stock
+            </Link>
+         
+        </div>
+
+        {/* Clear filters */}
+        <button
+          onClick={() => {
+            setSearch("");
+            setCategoryFilter("");
+            setTypeFilter("ALL");
+            setShowLowStockOnly(false);
+          }}
+          className="self-end rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-500 hover:bg-slate-50"
+        >
+          Clear filters
+        </button>
       </div>
 
-      {filteredProducts.map((product) => {
-        const inventory = inventoriesByProduct[product.id] || [];
-        const hasInventory = inventory.length > 0;
-
-        const rawTotal = inventory
-          .filter((row) => row.type === "RAW")
-          .reduce((sum, row) => sum + row.quantity, 0);
-
-        const printedTotal = inventory
-          .filter((row) => row.type === "PRINTED")
-          .reduce((sum, row) => sum + row.quantity, 0);
-
-        const totalBarcodes = inventory.reduce((sum, row) => {
-          if (Array.isArray(row.barcodes)) {
-            return sum + row.barcodes.length;
-          }
-          return sum;
-        }, 0);
-
-        const remainingToLabel =
-          printedTotal - totalBarcodes > 0
-            ? printedTotal - totalBarcodes
-            : 0;
-
-        const supplier = supplierByProduct[product.id];
-
-        return (
-          <section
-            key={product.id}
-            className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3"
+      {/* ---------- PRODUCT LIST ---------- */}
+      {filteredProducts.length === 0 ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-6 text-center">
+          <p className="text-sm text-slate-500">
+            No products match your filters.
+          </p>
+          <button
+            onClick={() => {
+              setSearch("");
+              setCategoryFilter("");
+              setTypeFilter("ALL");
+              setShowLowStockOnly(false);
+            }}
+            className="mt-2 text-xs text-blue-600 hover:underline"
           >
-            <div className="flex items-start justify-between gap-3">
-              <div className="space-y-1">
-                <h2 className="text-sm font-semibold">{product.name}</h2>
-                <p className="text-[11px] text-slate-500">
-                  Product ID: {product.id}
-                </p>
-                {supplier && (
-                  <div className="text-[11px] text-slate-600 space-y-0.5">
-                    <p>
-                      <span className="font-semibold">Supplier:</span>{" "}
-                      {supplier.supplierName || "—"}
-                    </p>
-                    {supplier.notes && (
-                      <p>
-                        <span className="font-semibold">Notes:</span>{" "}
-                        {supplier.notes}
-                      </p>
+            Clear all filters
+          </button>
+        </div>
+      ) : (
+        filteredProducts.map((product) => {
+          const rows = inventoriesByProduct[product.id] || [];
+
+          const rawQuantity = rows
+            .filter((row) => row.type === "RAW")
+            .reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+
+          const printedQuantity = rows
+            .filter((row) => row.type === "PRINTED")
+            .reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+
+          // Barcode stats (deduplicated per design)
+          const barcodeByDesign = new Map<
+            string,
+            { total: number; available: number; used: number }
+          >();
+
+          rows.forEach((row) => {
+            if (!row.designCode || barcodeByDesign.has(row.designCode)) return;
+            barcodeByDesign.set(row.designCode, {
+              total: Number(row.totalBarcodes || 0),
+              available: Number(row.availableBarcodes || 0),
+              used: Number(row.usedBarcodes || 0),
+            });
+          });
+
+          const totalBarcodes = Array.from(barcodeByDesign.values()).reduce(
+            (sum, item) => sum + item.total,
+            0
+          );
+          const remainingToLabel = Array.from(barcodeByDesign.values()).reduce(
+            (sum, item) => sum + item.available,
+            0
+          );
+          const usedBarcodes = Array.from(barcodeByDesign.values()).reduce(
+            (sum, item) => sum + item.used,
+            0
+          );
+
+          const supplier = supplierByProduct[product.id];
+
+          return (
+            <section
+              key={product.id}
+              className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md"
+            >
+              {/* Header */}
+              <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-semibold text-slate-800">
+                      {product.name}
+                    </h2>
+                    {product.categoryName && (
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">
+                        {product.categoryName}
+                      </span>
                     )}
                   </div>
-                )}
+
+                  <p className="mt-1 text-xs text-slate-400">
+                    ID: {product.id}
+                  </p>
+
+                  {supplier && (
+                    <p className="mt-1 text-xs text-slate-500">
+                      Supplier: {supplier.supplierName || "-"}
+                      {supplier.status && (
+                        <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-[10px]">
+                          {supplier.status}
+                        </span>
+                      )}
+                    </p>
+                  )}
+                </div>
+
+                <Link
+                  href={`/dashboard/barcodes/${product.id}`}
+                  className="shrink-0 text-xs font-medium text-blue-700 hover:underline"
+                >
+                  Manage barcodes →
+                </Link>
               </div>
 
-              <Link
-                href={`/dashboard/barcodes/${product.id}`}
-                className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-[11px] font-medium text-blue-700 hover:bg-blue-100"
-              >
-                Manage barcodes
-              </Link>
-            </div>
+              {/* Summary cards */}
+              <div className="mt-4 grid grid-cols-2 gap-3 text-sm md:grid-cols-5">
+                <div className="rounded-lg bg-slate-50 p-3">
+                  <p className="text-[11px] text-slate-500">RAW</p>
+                  <p className="mt-1 font-semibold">{rawQuantity}</p>
+                </div>
 
-            {/* summary row */}
-            <div className="flex flex-wrap gap-3 text-[11px] text-slate-600">
-              <div className="rounded-full bg-slate-50 px-3 py-1">
-                <span className="font-semibold">RAW:</span> {rawTotal}
-              </div>
-              <div className="rounded-full bg-slate-50 px-3 py-1">
-                <span className="font-semibold">PRINTED:</span>{" "}
-                {printedTotal}
-              </div>
-              <div className="rounded-full bg-slate-50 px-3 py-1">
-                <span className="font-semibold">Remaining to label:</span>{" "}
-                {remainingToLabel}
-              </div>
-              <div className="rounded-full bg-slate-50 px-3 py-1">
-                <span className="font-semibold">Total barcodes:</span>{" "}
-                {totalBarcodes}
-              </div>
-            </div>
+                <div className="rounded-lg bg-slate-50 p-3">
+                  <p className="text-[11px] text-slate-500">PRINTED</p>
+                  <p className="mt-1 font-semibold">{printedQuantity}</p>
+                </div>
 
-            {!hasInventory ? (
-              <p className="text-xs text-slate-400">
-                No inventory records yet for this product.
-              </p>
-            ) : (
-              <div className="max-h-64 overflow-y-auto">
-                <table className="min-w-full text-[11px]">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="px-3 py-2 text-left text-slate-500 font-medium">
-                        Type
-                      </th>
-                      <th className="px-3 py-2 text-left text-slate-500 font-medium">
-                        Design
-                      </th>
-                      <th className="px-3 py-2 text-left text-slate-500 font-medium">
-                        Quantity
-                      </th>
-                      <th className="px-3 py-2 text-left text-slate-500 font-medium">
-                        Min threshold
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {inventory
-                      .filter((row) =>
-                        typeFilter === "ALL" ? true : row.type === typeFilter
-                      )
-                      .map((row) => (
-                        <tr key={row._id}>
-                          <td className="px-3 py-1.5 align-top">
-                            <span
-                              className={
-                                "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide " +
-                                (row.type === "RAW"
-                                  ? "border-amber-200 bg-amber-50 text-amber-700"
-                                  : "border-emerald-200 bg-emerald-50 text-emerald-700")
-                              }
-                            >
-                              {row.type}
-                            </span>
-                          </td>
-                          <td className="px-3 py-1.5 align-top">
-                            {row.designCode ?? (
-                              <span className="text-[10px] text-slate-400">
-                                N/A
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-1.5 align-top">
-                            {row.quantity}
-                          </td>
-                          <td className="px-3 py-1.5 align-top">
-                            {row.minThreshold}
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
+                <div className="rounded-lg bg-blue-50 p-3">
+                  <p className="text-[11px] text-blue-700">
+                    Remaining to label
+                  </p>
+                  <p className="mt-1 font-semibold text-blue-800">
+                    {remainingToLabel}
+                  </p>
+                </div>
+
+                <div className="rounded-lg bg-slate-50 p-3">
+                  <p className="text-[11px] text-slate-500">Total barcodes</p>
+                  <p className="mt-1 font-semibold">{totalBarcodes}</p>
+                </div>
+
+                <div className="rounded-lg bg-slate-50 p-3">
+                  <p className="text-[11px] text-slate-500">Used barcodes</p>
+                  <p className="mt-1 font-semibold">{usedBarcodes}</p>
+                </div>
               </div>
-            )}
-          </section>
-        );
-      })}
+
+              {/* Table */}
+              {rows.length === 0 ? (
+                <p className="mt-4 text-xs text-slate-400">
+                  No inventory records yet for this product.
+                </p>
+              ) : (
+                <div className="mt-4 overflow-x-auto">
+                  <table className="min-w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-600">
+                      <tr>
+                        <th className="p-2">Type</th>
+                        <th className="p-2">Design</th>
+                        <th className="p-2">Qty</th>
+                        <th className="p-2">Available</th>
+                        <th className="p-2">Used</th>
+                        <th className="p-2">Min threshold</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row) => {
+                        const isLow =
+                          row.minThreshold > 0 &&
+                          row.quantity <= row.minThreshold;
+
+                        return (
+                          <tr
+                            key={row._id}
+                            className={`border-b border-slate-100 ${
+                              isLow ? "bg-red-50" : ""
+                            }`}
+                          >
+                            <td className="p-2">
+                              <TypeBadge type={row.type} />
+                            </td>
+                            <td className="p-2 font-mono text-[11px]">
+                              {row.designCode || "-"}
+                            </td>
+                            <td className="p-2">{row.quantity}</td>
+                            <td className="p-2">
+                              {row.availableBarcodes ?? 0}
+                            </td>
+                            <td className="p-2">{row.usedBarcodes ?? 0}</td>
+                            <td className="p-2">
+                              {editingId === row._id ? (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    value={editValue}
+                                    onChange={(e) =>
+                                      setEditValue(e.target.value)
+                                    }
+                                    onKeyDown={(e) => handleKeyDown(e, row._id)}
+                                    onBlur={() => saveThreshold(row._id)}
+                                    className="w-16 rounded border border-slate-300 px-1 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                    min="0"
+                                    step="1"
+                                    autoFocus
+                                    disabled={saving}
+                                  />
+                                  <button
+                                    onClick={cancelEdit}
+                                    className="text-slate-400 hover:text-slate-600"
+                                    title="Cancel"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => startEdit(row)}
+                                  className={`group flex items-center gap-1 rounded px-1 -mx-1 hover:bg-slate-100 ${
+                                    isLow ? "text-red-700 font-semibold" : ""
+                                  }`}
+                                  title="Click to edit threshold"
+                                >
+                                  <span>{row.minThreshold}</span>
+                                  <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    className="h-3 w-3 text-slate-300 group-hover:text-slate-600"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    stroke="currentColor"
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      strokeWidth={2}
+                                      d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                                    />
+                                  </svg>
+                                </button>
+                              )}
+                              {successId === row._id && (
+                                <span className="ml-1 text-green-600 text-xs">
+                                  ✓
+                                </span>
+                              )}
+                              {error && editingId === row._id && (
+                                <span className="ml-1 text-red-600 text-xs">
+                                  {error}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          );
+        })
+      )}
     </div>
   );
 }

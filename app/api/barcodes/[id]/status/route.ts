@@ -1,3 +1,4 @@
+// app/api/barcodes/[id]/status/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
@@ -5,7 +6,7 @@ const BACKEND_URL = "https://inventory-system-ecew.onrender.com";
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: { id: string } }
 ) {
   try {
     const cookieStore = await cookies();
@@ -15,17 +16,19 @@ export async function PATCH(
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
 
-    const { id } = await params;
     const body = await req.json();
 
-    const res = await fetch(`${BACKEND_URL}/api/barcodes/${id}/status`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(body),
-    });
+    const res = await fetch(
+      `${BACKEND_URL}/api/barcodes/${params.id}/status`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(body),
+      }
+    );
 
     const data = await res.json().catch(() => ({}));
     return NextResponse.json(data, { status: res.status });

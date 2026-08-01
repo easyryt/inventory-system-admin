@@ -2,35 +2,48 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-type ProductForPo = {
+// ----- Types -----
+type Product = {
   id: string;
   name: string;
   categoryName: string;
   rawQuantity: number;
 };
 
-type PurchaseOrderStatus = "PENDING" | "CREATED" | "VERIFIED" | "PARTIAL";
+type Design = {
+  _id: string;
+  name: string;
+  mode?: string;
+  designCode: string;
+  designUrl?: string;
+  notes?: string;
+};
+
+type PurchaseOrderStatus = "PENDING" | "VERIFIED";
 
 type PoItem = {
   productId: string;
-  name: string;
-  currentRaw: number;
+  productName: string;
+  designId: string;
+  designCode: string;
+  designName: string;
   orderedQty: string;
 };
 
-type CreatedPoItem = {
-  productId: string;
-  orderedQty: number;
-  receivedQty?: number;
-  productName?: string;
-};
-
-type CreatedPO = {
+type ListPOItem = {
   _id: string;
   supplierName: string;
   notes?: string;
-  items: CreatedPoItem[];
-  status?: PurchaseOrderStatus;
+  items: {
+    productId: string | { _id: string; name: string };
+    designId: string;
+    designCode: string;
+    orderedQty: number;
+    receivedQty?: number;
+    productName?: string;
+    designName?: string;
+  }[];
+  status: PurchaseOrderStatus;
   textSummary?: string;
   createdAt?: string;
   purchaseDate?: string;
@@ -38,71 +51,75 @@ type CreatedPO = {
 
 type VerifyItem = {
   productId: string;
+  designId: string;
+  designCode: string;
   productName: string;
+  designName: string;
   orderedQty: number;
   receivedQty: string;
 };
 
-type Props = {
-  products: ProductForPo[];
-};
-
-type ToastState =
-  | {
-      type: "success" | "error";
-      message: string;
-    }
-  | null;
-
-type ListPOItem = {
-  _id: string;
-  supplierName: string;
-  notes?: string;
-  items: CreatedPoItem[];
-  status: PurchaseOrderStatus;
-  textSummary?: string;
-  createdAt?: string;
-  purchaseDate?: string;
-};
-
-const STATUS_OPTIONS: PurchaseOrderStatus[] = [
-  "PENDING",
-  "CREATED",
-  "VERIFIED",
-  "PARTIAL",
-];
+type ToastState = { type: "success" | "error"; message: string } | null;
 
 const todayDate = () => new Date().toISOString().slice(0, 10);
 
-const formatDate = (date?: string) => {
-  if (!date) return "-";
-  const d = new Date(date);
-  if (Number.isNaN(d.getTime())) return date;
-  return d.toLocaleDateString("en-GB");
+type Props = {
+  products: Product[];
+};
+
+// Helper to safely get product ID as string
+const getProductId = (productId: string | { _id: string; name?: string }): string => {
+  if (typeof productId === 'object' && productId !== null) {
+    return productId._id || String(productId);
+  }
+  return String(productId);
+};
+
+// Helper to safely get product name
+const getProductName = (productId: string | { _id: string; name?: string }): string => {
+  if (typeof productId === 'object' && productId !== null) {
+    return productId.name || 'Unknown product';
+  }
+  return 'Unknown product';
+};
+
+// Helper to format date as DD-MM-YYYY
+const formatDateForWhatsApp = (date: Date) => {
+  const d = date.getDate().toString().padStart(2, '0');
+  const m = (date.getMonth() + 1).toString().padStart(2, '0');
+  const y = date.getFullYear();
+  return `${d}-${m}-${y}`;
 };
 
 export default function PurchaseOrderPage({ products }: Props) {
+  // ---------- Create PO state ----------
   const [supplierName, setSupplierName] = useState("");
   const [notes, setNotes] = useState("");
-  const [status, setStatus] = useState<PurchaseOrderStatus>("PENDING");
   const [purchaseDate, setPurchaseDate] = useState(todayDate());
   const [items, setItems] = useState<PoItem[]>([]);
   const [selectedProductId, setSelectedProductId] = useState("");
+  const [selectedDesignId, setSelectedDesignId] = useState("");
   const [selectedQty, setSelectedQty] = useState("");
+  const [designs, setDesigns] = useState<Design[]>([]);
+  const [loadingDesigns, setLoadingDesigns] = useState(false);
   const [createError, setCreateError] = useState("");
   const [creating, setCreating] = useState(false);
 
-  const [createdPO, setCreatedPO] = useState<CreatedPO | null>(null);
+  // ---------- List state ----------
+  const [purchaseOrders, setPurchaseOrders] = useState<ListPOItem[]>([]);
+  const [listLoading, setListLoading] = useState(false);
+  const [listError, setListError] = useState("");
+
+  // ---------- Selection state ----------
+  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
+
+  // ---------- Verify modal state ----------
+  const [selectedVerifyOrder, setSelectedVerifyOrder] = useState<ListPOItem | null>(null);
   const [verifyItems, setVerifyItems] = useState<VerifyItem[]>([]);
   const [verifyError, setVerifyError] = useState("");
   const [verifying, setVerifying] = useState(false);
 
-  const [purchaseOrders, setPurchaseOrders] = useState<ListPOItem[]>([]);
-  const [listLoading, setListLoading] = useState(false);
-  const [listError, setListError] = useState("");
-  const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
-  const [updatingDateId, setUpdatingDateId] = useState<string | null>(null);
-
+  // ---------- Toast ----------
   const [toast, setToast] = useState<ToastState>(null);
   const [copiedSummary, setCopiedSummary] = useState(false);
 
@@ -118,40 +135,66 @@ export default function PurchaseOrderPage({ products }: Props) {
     return () => clearTimeout(t);
   }, [copiedSummary]);
 
-  const showSuccess = (message: string) => setToast({ type: "success", message });
-  const showError = (message: string) => setToast({ type: "error", message });
+  const showSuccess = (msg: string) => setToast({ type: "success", message: msg });
+  const showError = (msg: string) => setToast({ type: "error", message: msg });
 
-  const resetVerifyState = () => {
-    setCreatedPO(null);
-    setVerifyItems([]);
-    setVerifyError("");
-  };
+  // ---------- Fetch designs ----------
+  useEffect(() => {
+    if (!selectedProductId) {
+      setDesigns([]);
+      setSelectedDesignId("");
+      return;
+    }
 
+    const fetchDesigns = async () => {
+      setLoadingDesigns(true);
+      try {
+        const res = await fetch(`/api/product-designs/product/${selectedProductId}`, {
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) {
+          setDesigns(data.designs || []);
+          if (data.designs?.length > 0) {
+            setSelectedDesignId(data.designs[0]._id);
+          }
+        } else {
+          setDesigns([]);
+        }
+      } catch {
+        setDesigns([]);
+      } finally {
+        setLoadingDesigns(false);
+      }
+    };
+
+    fetchDesigns();
+  }, [selectedProductId]);
+
+  // ---------- Fetch orders ----------
   const fetchPurchaseOrders = async () => {
     try {
       setListLoading(true);
       setListError("");
-
       const res = await fetch("/api/purchase-orders", {
+        credentials: "include",
         method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         cache: "no-store",
       });
-
       const data = await res.json().catch(() => ({}));
-
       if (!res.ok) {
-        const msg = data?.message || "Failed to load purchase orders";
+        const msg = data?.message || "Failed to load orders";
         setListError(msg);
         showError(msg);
         return;
       }
-
-      setPurchaseOrders((data?.purchaseOrders || []) as ListPOItem[]);
+      setPurchaseOrders(data.purchaseOrders || []);
+      // Clear selection after refresh
+      setSelectedOrderIds(new Set());
     } catch {
-      const msg = "Something went wrong while loading purchase orders";
+      const msg = "Something went wrong loading orders";
       setListError(msg);
       showError(msg);
     } finally {
@@ -163,39 +206,46 @@ export default function PurchaseOrderPage({ products }: Props) {
     fetchPurchaseOrders();
   }, []);
 
+  // ---------- Add/remove lines ----------
   const addLine = () => {
     setCreateError("");
-    setVerifyError("");
-    resetVerifyState();
-
     if (!selectedProductId) {
-      const msg = "Select a product";
-      setCreateError(msg);
-      showError("Select a product before adding to the list");
+      setCreateError("Select a product");
+      showError("Select a product");
       return;
     }
-
+    if (!selectedDesignId) {
+      setCreateError("Select a design/model");
+      showError("Select a design");
+      return;
+    }
     const qtyNum = Number(selectedQty);
-    if (Number.isNaN(qtyNum) || qtyNum <= 0) {
-      const msg = "Quantity must be greater than 0";
-      setCreateError(msg);
-      showError("Order quantity must be greater than 0");
+    if (isNaN(qtyNum) || qtyNum <= 0) {
+      setCreateError("Quantity must be > 0");
+      showError("Quantity must be > 0");
       return;
     }
 
-    const prod = products.find((p) => p.id === selectedProductId);
-    if (!prod) {
-      const msg = "Product not found";
-      setCreateError(msg);
-      showError("Selected product not found");
+    const product = products.find((p) => p.id === selectedProductId);
+    if (!product) {
+      setCreateError("Product not found");
+      showError("Product not found");
+      return;
+    }
+    const design = designs.find((d) => d._id === selectedDesignId);
+    if (!design) {
+      setCreateError("Design not found");
+      showError("Design not found");
       return;
     }
 
-    const existsIndex = items.findIndex((i) => i.productId === selectedProductId);
-    if (existsIndex >= 0) {
+    const exists = items.find(
+      (i) => i.productId === selectedProductId && i.designId === selectedDesignId
+    );
+    if (exists) {
       setItems((prev) =>
-        prev.map((i, idx) =>
-          idx === existsIndex
+        prev.map((i) =>
+          i.productId === selectedProductId && i.designId === selectedDesignId
             ? { ...i, orderedQty: String(Number(i.orderedQty) + qtyNum) }
             : i
         )
@@ -204,37 +254,38 @@ export default function PurchaseOrderPage({ products }: Props) {
       setItems((prev) => [
         ...prev,
         {
-          productId: prod.id,
-          name: prod.name,
-          currentRaw: prod.rawQuantity,
+          productId: product.id,
+          productName: product.name,
+          designId: design._id,
+          designCode: design.designCode,
+          designName: design.name,
           orderedQty: String(qtyNum),
         },
       ]);
     }
 
     setSelectedProductId("");
+    setSelectedDesignId("");
     setSelectedQty("");
   };
 
-  const removeLine = (productId: string) => {
-    setItems((prev) => prev.filter((i) => i.productId !== productId));
-    resetVerifyState();
+  const removeLine = (productId: string, designId: string) => {
+    setItems((prev) =>
+      prev.filter((i) => !(i.productId === productId && i.designId === designId))
+    );
   };
 
+  // ---------- Create PO ----------
   const handleCreatePo = async () => {
     setCreateError("");
-    setVerifyError("");
-    resetVerifyState();
-
     if (!supplierName.trim()) {
       const msg = "Supplier name is required";
       setCreateError(msg);
       showError(msg);
       return;
     }
-
     if (items.length === 0) {
-      const msg = "Add at least one product to the purchase order";
+      const msg = "Add at least one product/design";
       setCreateError(msg);
       showError(msg);
       return;
@@ -243,54 +294,38 @@ export default function PurchaseOrderPage({ products }: Props) {
     const payload = {
       supplierName: supplierName.trim(),
       notes: notes.trim() || undefined,
-      status,
       purchaseDate,
       items: items.map((i) => ({
         productId: i.productId,
+        designId: i.designId,
+        designCode: i.designCode,
         orderedQty: Number(i.orderedQty),
       })),
     };
 
     try {
       setCreating(true);
-
       const res = await fetch("/api/purchase-orders", {
+        credentials: "include",
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-
       const data = await res.json().catch(() => ({}));
-
       if (!res.ok) {
-        const msg = data?.message || "Failed to create purchase order";
+        const msg = data?.message || "Failed to create PO";
         setCreateError(msg);
         showError(msg);
         return;
       }
-
-      const po: CreatedPO = data.purchaseOrder ?? data;
-      setCreatedPO(po);
-
-      const vItems: VerifyItem[] = (po.items || []).map((it) => {
-        const fallbackProduct = products.find((p) => p.id === String(it.productId));
-        const productName = it.productName || fallbackProduct?.name || "Unknown product";
-
-        return {
-          productId: String(it.productId),
-          productName,
-          orderedQty: it.orderedQty,
-          receivedQty: String(it.orderedQty),
-        };
-      });
-
-      setVerifyItems(vItems);
-      showSuccess("Purchase order created successfully");
+      showSuccess("Purchase order created");
+      setSupplierName("");
+      setNotes("");
+      setPurchaseDate(todayDate());
+      setItems([]);
       await fetchPurchaseOrders();
     } catch {
-      const msg = "Something went wrong while creating the PO";
+      const msg = "Something went wrong while creating PO";
       setCreateError(msg);
       showError(msg);
     } finally {
@@ -298,58 +333,76 @@ export default function PurchaseOrderPage({ products }: Props) {
     }
   };
 
-  const changeReceivedQty = (productId: string, value: string) => {
-    setVerifyItems((prev) =>
-      prev.map((it) => (it.productId === productId ? { ...it, receivedQty: value } : it))
-    );
+  // ---------- Verify modal ----------
+  const openVerifyModal = (order: ListPOItem) => {
+    setSelectedVerifyOrder(order);
+    const vItems: VerifyItem[] = (order.items || []).map((it) => {
+      const productId = getProductId(it.productId);
+      const productName = getProductName(it.productId);
+
+      return {
+        productId,
+        designId: String(it.designId),
+        designCode: it.designCode,
+        productName: it.productName || productName,
+        designName: it.designName || 'Unknown design',
+        orderedQty: it.orderedQty,
+        receivedQty: String(it.orderedQty),
+      };
+    });
+    setVerifyItems(vItems);
+    setVerifyError("");
   };
 
-  const handleVerifyPo = async () => {
-    if (!createdPO) return;
+  const closeVerifyModal = () => {
+    setSelectedVerifyOrder(null);
+    setVerifyItems([]);
+    setVerifyError("");
+  };
 
+  // ---------- Verify PO ----------
+  const handleVerify = async () => {
+    if (!selectedVerifyOrder) return;
     setVerifyError("");
 
-    const payload = {
-      items: verifyItems.map((it) => ({
-        productId: it.productId,
-        receivedQty: Number(it.receivedQty),
-      })),
-    };
-
-    for (const i of payload.items) {
-      if (Number.isNaN(i.receivedQty) || i.receivedQty < 0) {
-        const msg = "Received quantities must be 0 or more";
-        setVerifyError(msg);
-        showError(msg);
+    for (const it of verifyItems) {
+      const qty = Number(it.receivedQty);
+      if (isNaN(qty) || qty < 0) {
+        setVerifyError("All received quantities must be 0 or more");
+        showError("Invalid quantity");
         return;
       }
     }
 
+    const payload = {
+      items: verifyItems.map((it) => ({
+        productId: it.productId,
+        designCode: it.designCode,
+        receivedQty: Number(it.receivedQty),
+      })),
+    };
+
     try {
       setVerifying(true);
-
-      const res = await fetch(`/api/purchase-orders/${createdPO._id}/verify`, {
+      const res = await fetch(`/api/purchase-orders/${selectedVerifyOrder._id}/verify`, {
+        credentials: "include",
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-
       const data = await res.json().catch(() => ({}));
-
       if (!res.ok) {
-        const msg = data?.message || "Failed to verify purchase order";
+        const msg = data?.message || "Verification failed";
         setVerifyError(msg);
         showError(msg);
         return;
       }
-
-      showSuccess("Purchase order verified and inventory updated");
-      setCreatedPO(data.purchaseOrder ?? createdPO);
+      showSuccess("Order verified & design-specific raw stock updated");
+      closeVerifyModal();
       await fetchPurchaseOrders();
+      window.location.reload();
     } catch {
-      const msg = "Something went wrong while verifying the PO";
+      const msg = "Something went wrong during verification";
       setVerifyError(msg);
       showError(msg);
     } finally {
@@ -357,83 +410,35 @@ export default function PurchaseOrderPage({ products }: Props) {
     }
   };
 
-  const updatePurchaseOrderStatus = async (poId: string, newStatus: PurchaseOrderStatus) => {
-    try {
-      setUpdatingStatusId(poId);
-      setListError("");
-
-      const res = await fetch(`/api/purchase-orders/${poId}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ status: newStatus }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        const msg = data?.message || "Failed to update status";
-        showError(msg);
-        setListError(msg);
-        return;
-      }
-
-      showSuccess("Purchase order status updated");
-      await fetchPurchaseOrders();
-
-      if (createdPO?._id === poId) {
-        setCreatedPO((prev) => (prev ? { ...prev, status: newStatus } : prev));
-      }
-    } catch {
-      const msg = "Something went wrong while updating status";
-      showError(msg);
-      setListError(msg);
-    } finally {
-      setUpdatingStatusId(null);
-    }
-  };
-
+  // ---------- Update date ----------
   const updatePurchaseOrderDate = async (poId: string, newDate: string) => {
     try {
-      setUpdatingDateId(poId);
       setListError("");
-
       const res = await fetch(`/api/purchase-orders/${poId}`, {
+        credentials: "include",
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ purchaseDate: newDate }),
       });
-
       const data = await res.json().catch(() => ({}));
-
       if (!res.ok) {
-        const msg = data?.message || "Failed to update purchase date";
+        const msg = data?.message || "Failed to update date";
         showError(msg);
-        setListError(msg);
         return;
       }
-
       showSuccess("Purchase date updated");
       await fetchPurchaseOrders();
-
-      if (createdPO?._id === poId) {
-        setCreatedPO((prev) => (prev ? { ...prev, purchaseDate: newDate } : prev));
-      }
     } catch {
-      const msg = "Something went wrong while updating purchase date";
-      showError(msg);
-      setListError(msg);
-    } finally {
-      setUpdatingDateId(null);
+      showError("Something went wrong updating date");
     }
   };
 
+  // ---------- Draft summary for creation form ----------
   const draftSummary = useMemo(() => {
     if (items.length === 0) return "";
-    return items.map((i) => `${i.name} - ${i.orderedQty}pcs`).join(", ");
+    return items
+      .map((i) => `${i.productName} - ${i.designName} (${i.designCode}) - ${i.orderedQty}pcs`)
+      .join(", ");
   }, [items]);
 
   const copyDraftSummary = async () => {
@@ -441,7 +446,6 @@ export default function PurchaseOrderPage({ products }: Props) {
       showError("Add at least one product first");
       return;
     }
-
     try {
       await navigator.clipboard.writeText(draftSummary);
       setCopiedSummary(true);
@@ -451,29 +455,89 @@ export default function PurchaseOrderPage({ products }: Props) {
     }
   };
 
-  const openWhatsApp = () => {
+  // ---------- WhatsApp for creation draft ----------
+  const openWhatsAppDraft = () => {
     if (!draftSummary) {
       showError("Add at least one product first");
       return;
     }
-
     const message = encodeURIComponent(draftSummary);
     window.open(`https://wa.me/?text=${message}`, "_blank", "noopener,noreferrer");
   };
 
-  const selectedStatusLabel = useMemo(() => status, [status]);
+  // ---------- WhatsApp for selected orders ----------
+  const generateWhatsAppMessageFromSelectedOrders = () => {
+    if (selectedOrderIds.size === 0) {
+      showError("Select at least one order");
+      return null;
+    }
 
+    // Aggregate quantities by product name
+    const productTotals: Record<string, number> = {};
+
+    for (const order of purchaseOrders) {
+      if (!selectedOrderIds.has(order._id)) continue;
+
+      for (const item of order.items) {
+        const productName = getProductName(item.productId);
+        const qty = item.orderedQty || 0;
+        if (productName && qty > 0) {
+          productTotals[productName] = (productTotals[productName] || 0) + qty;
+        }
+      }
+    }
+
+    // Build message
+    const dateLine = formatDateForWhatsApp(new Date());
+    const productLines = Object.entries(productTotals)
+      .sort((a, b) => a[0].localeCompare(b[0])) // alphabetical
+      .map(([name, total]) => `${name} = ${total}`)
+      .join('\n');
+
+    return `${dateLine}\n${productLines}`;
+  };
+
+  const openWhatsAppSelected = () => {
+    const message = generateWhatsAppMessageFromSelectedOrders();
+    if (!message) return;
+    const encoded = encodeURIComponent(message);
+    window.open(`https://wa.me/?text=${encoded}`, "_blank", "noopener,noreferrer");
+  };
+
+  // Toggle selection for an order
+  const toggleSelectOrder = (orderId: string) => {
+    setSelectedOrderIds((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(orderId)) {
+        newSet.delete(orderId);
+      } else {
+        newSet.add(orderId);
+      }
+      return newSet;
+    });
+  };
+
+  // Select/deselect all
+  const toggleSelectAll = () => {
+    if (selectedOrderIds.size === purchaseOrders.length) {
+      setSelectedOrderIds(new Set());
+    } else {
+      setSelectedOrderIds(new Set(purchaseOrders.map((o) => o._id)));
+    }
+  };
+
+  // ---------- Render ----------
   return (
     <section className="relative rounded-2xl border border-slate-200 bg-white p-4 space-y-5">
+      {/* Toast */}
       {toast && (
         <div className="absolute right-4 top-4 z-10">
           <div
-            className={
-              "rounded-xl px-3 py-2 text-xs shadow-sm border " +
-              (toast.type === "success"
+            className={`rounded-xl px-3 py-2 text-xs shadow-sm border ${
+              toast.type === "success"
                 ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                : "bg-red-50 border-red-200 text-red-700")
-            }
+                : "bg-red-50 border-red-200 text-red-700"
+            }`}
           >
             {toast.message}
           </div>
@@ -483,86 +547,11 @@ export default function PurchaseOrderPage({ products }: Props) {
       <div className="flex flex-col gap-1 pr-24">
         <h2 className="text-sm font-semibold">Purchase Orders</h2>
         <p className="text-xs text-slate-500">
-          Create a purchase order, set purchase date and status, verify received stock, and update later.
+          Create PENDING orders with product+design, then verify to update RAW stock per design.
         </p>
       </div>
 
-      <div className="border border-slate-100 rounded-xl overflow-hidden">
-        <div className="bg-slate-50 px-3 py-2 text-[11px] font-medium text-slate-600">
-          Live RAW stock snapshot
-        </div>
-        <div className="max-h-40 overflow-y-auto">
-          <table className="min-w-full text-[11px]">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="px-3 py-2 text-left text-slate-500 font-medium">Product</th>
-                <th className="px-3 py-2 text-left text-slate-500 font-medium">Category</th>
-                <th className="px-3 py-2 text-left text-slate-500 font-medium">RAW qty</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {products.map((p) => (
-                <tr key={p.id}>
-                  <td className="px-3 py-1.5">{p.name}</td>
-                  <td className="px-3 py-1.5 text-slate-500">{p.categoryName}</td>
-                  <td className="px-3 py-1.5">{p.rawQuantity}</td>
-                </tr>
-              ))}
-              {products.length === 0 && (
-                <tr>
-                  <td colSpan={3} className="px-3 py-4 text-center text-slate-400">
-                    No products found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="border border-slate-100 rounded-xl p-3 space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h3 className="text-xs font-semibold text-slate-700">Draft Text Generation</h3>
-            <p className="text-[11px] text-slate-500">
-              Click Create to generate a clean vendor text summary.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={copyDraftSummary}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
-          >
-            Copy
-          </button>
-        </div>
-
-        <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-          {draftSummary || "iPhone 16 - 350pcs, iPhone 11 - 50pcs"}
-        </div>
-
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={copyDraftSummary}
-            className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-medium text-white hover:bg-slate-800"
-          >
-            Create
-          </button>
-          <button
-            type="button"
-            onClick={openWhatsApp}
-            className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-500"
-          >
-            Send on WhatsApp
-          </button>
-        </div>
-
-        {copiedSummary && (
-          <p className="text-[11px] text-emerald-700">Summary copied to clipboard.</p>
-        )}
-      </div>
-
+      {/* Create PO form */}
       <div className="border border-slate-100 rounded-xl p-3 space-y-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:gap-3">
           <div className="flex-1">
@@ -574,10 +563,9 @@ export default function PurchaseOrderPage({ products }: Props) {
               value={supplierName}
               onChange={(e) => setSupplierName(e.target.value)}
               placeholder="e.g. Sadar Bazar Vendor"
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100"
             />
           </div>
-
           <div className="flex-1">
             <label className="block text-xs font-medium text-slate-600 mb-1">
               Notes (optional)
@@ -587,10 +575,9 @@ export default function PurchaseOrderPage({ products }: Props) {
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="e.g. urgent restock"
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100"
             />
           </div>
-
           <div className="w-full sm:w-40">
             <label className="block text-xs font-medium text-slate-600 mb-1">
               Purchase date
@@ -599,30 +586,9 @@ export default function PurchaseOrderPage({ products }: Props) {
               type="date"
               value={purchaseDate}
               onChange={(e) => setPurchaseDate(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100"
             />
           </div>
-
-          <div className="w-full sm:w-40">
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Status
-            </label>
-            <select
-              value={status}
-              onChange={(e) => setStatus(e.target.value as PurchaseOrderStatus)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
-            >
-              {STATUS_OPTIONS.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <div className="text-[11px] text-slate-500">
-          Current create status: <span className="font-medium text-slate-700">{selectedStatusLabel}</span>
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
@@ -633,7 +599,7 @@ export default function PurchaseOrderPage({ products }: Props) {
             <select
               value={selectedProductId}
               onChange={(e) => setSelectedProductId(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100"
             >
               <option value="">Select product</option>
               {products.map((p) => (
@@ -643,7 +609,26 @@ export default function PurchaseOrderPage({ products }: Props) {
               ))}
             </select>
           </div>
-
+          <div className="flex-1">
+            <label className="block text-xs font-medium text-slate-600 mb-1">
+              Design/Model
+            </label>
+            <select
+              value={selectedDesignId}
+              onChange={(e) => setSelectedDesignId(e.target.value)}
+              disabled={!selectedProductId || loadingDesigns}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-60"
+            >
+              <option value="">
+                {loadingDesigns ? "Loading..." : "Select design"}
+              </option>
+              {designs.map((d) => (
+                <option key={d._id} value={d._id}>
+                  {d.name} ({d.designCode})
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="w-full sm:w-32">
             <label className="block text-xs font-medium text-slate-600 mb-1">
               Order qty
@@ -653,55 +638,45 @@ export default function PurchaseOrderPage({ products }: Props) {
               min={1}
               value={selectedQty}
               onChange={(e) => setSelectedQty(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100"
             />
           </div>
-
           <button
             type="button"
             onClick={addLine}
             className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500"
           >
-            Add to list
+            Add
           </button>
         </div>
 
         <div className="border-t border-slate-100 pt-3">
-          <h3 className="text-[11px] font-medium text-slate-600 mb-2">
-            Purchase order items
-          </h3>
-
+          <h3 className="text-[11px] font-medium text-slate-600 mb-2">Items</h3>
           {items.length === 0 ? (
-            <p className="text-[11px] text-slate-400">
-              No items yet. Add products above.
-            </p>
+            <p className="text-[11px] text-slate-400">No items added.</p>
           ) : (
             <div className="max-h-40 overflow-y-auto">
               <table className="min-w-full text-[11px]">
                 <thead className="bg-slate-50">
                   <tr>
-                    <th className="px-3 py-2 text-left text-slate-500 font-medium">
-                      Product
-                    </th>
-                    <th className="px-3 py-2 text-left text-slate-500 font-medium">
-                      Current RAW
-                    </th>
-                    <th className="px-3 py-2 text-left text-slate-500 font-medium">
-                      Ordered qty
-                    </th>
+                    <th className="px-3 py-2 text-left font-medium text-slate-500">Product</th>
+                    <th className="px-3 py-2 text-left font-medium text-slate-500">Design</th>
+                    <th className="px-3 py-2 text-left font-medium text-slate-500">Ordered</th>
                     <th className="px-3 py-2"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {items.map((i) => (
-                    <tr key={i.productId}>
-                      <td className="px-3 py-1.5">{i.name}</td>
-                      <td className="px-3 py-1.5">{i.currentRaw}</td>
+                    <tr key={`${i.productId}-${i.designId}`}>
+                      <td className="px-3 py-1.5">{i.productName}</td>
+                      <td className="px-3 py-1.5">
+                        {i.designName} ({i.designCode})
+                      </td>
                       <td className="px-3 py-1.5">{i.orderedQty}</td>
                       <td className="px-3 py-1.5 text-right">
                         <button
                           type="button"
-                          onClick={() => removeLine(i.productId)}
+                          onClick={() => removeLine(i.productId, i.designId)}
                           className="text-[11px] text-red-600 hover:underline"
                         >
                           Remove
@@ -728,107 +703,42 @@ export default function PurchaseOrderPage({ products }: Props) {
             onClick={handleCreatePo}
             className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-60"
           >
-            {creating ? "Creating PO..." : "Create Purchase Order"}
+            {creating ? "Creating..." : "Create PO"}
           </button>
         </div>
       </div>
 
-      {createdPO && (
-        <div className="border border-emerald-100 rounded-xl p-3 space-y-3 bg-emerald-50/40">
-          <div className="flex items-start justify-between gap-3">
-            <div className="space-y-1">
-              <h3 className="text-sm font-semibold text-emerald-800">
-                Verify received stock
-              </h3>
-              <p className="text-[11px] text-emerald-800">
-                <span className="font-medium">Supplier:</span> {createdPO.supplierName}
-              </p>
-              {createdPO.notes && (
-                <p className="text-[11px] text-emerald-800">
-                  <span className="font-medium">Notes:</span> {createdPO.notes}
-                </p>
-              )}
-              <p className="text-[11px] text-emerald-800">
-                <span className="font-medium">Status:</span>{" "}
-                {createdPO.status || "PENDING"}
-              </p>
-              <p className="text-[11px] text-emerald-800">
-                <span className="font-medium">Purchase date:</span>{" "}
-                {formatDate(createdPO.purchaseDate)}
-              </p>
-              <p className="text-[11px] text-emerald-700">
-                PO ID: <span className="font-mono">{createdPO._id}</span>
-              </p>
-            </div>
-          </div>
-
-          <div className="border border-emerald-100 rounded-lg overflow-hidden bg-white">
-            <table className="min-w-full text-[11px]">
-              <thead className="bg-emerald-50">
-                <tr>
-                  <th className="px-3 py-2 text-left text-emerald-700 font-medium">
-                    Product
-                  </th>
-                  <th className="px-3 py-2 text-left text-emerald-700 font-medium">
-                    Ordered
-                  </th>
-                  <th className="px-3 py-2 text-left text-emerald-700 font-medium">
-                    Received
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {verifyItems.map((it) => (
-                  <tr key={it.productId}>
-                    <td className="px-3 py-1.5">{it.productName}</td>
-                    <td className="px-3 py-1.5">{it.orderedQty}</td>
-                    <td className="px-3 py-1.5">
-                      <input
-                        type="number"
-                        min={0}
-                        value={it.receivedQty}
-                        onChange={(e) =>
-                          changeReceivedQty(it.productId, e.target.value)
-                        }
-                        className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-100 focus:border-blue-500"
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {verifyError && (
-            <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
-              {verifyError}
-            </p>
-          )}
-
-          <div className="flex justify-end">
+      {/* List of all purchase orders with selection */}
+      <div className="border border-slate-100 rounded-xl p-3 space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-semibold">All Purchase Orders</h3>
             <button
               type="button"
-              disabled={verifying}
-              onClick={handleVerifyPo}
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-60"
+              onClick={fetchPurchaseOrders}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              disabled={listLoading}
             >
-              {verifying ? "Verifying..." : "Verify & Update RAW"}
+              {listLoading ? "Loading..." : "Refresh"}
             </button>
           </div>
-        </div>
-      )}
-
-      <div className="border border-slate-100 rounded-xl p-3 space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold">All Purchase Orders</h3>
-          <button
-            type="button"
-            onClick={fetchPurchaseOrders}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
-            disabled={listLoading}
-          >
-            {listLoading ? "Loading..." : "Refresh"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={openWhatsAppSelected}
+              disabled={selectedOrderIds.size === 0}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Send WhatsApp ({selectedOrderIds.size})
+            </button>
+            <button
+              type="button"
+              onClick={toggleSelectAll}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              {selectedOrderIds.size === purchaseOrders.length ? "Deselect All" : "Select All"}
+            </button>
+          </div>
         </div>
 
         {listError && (
@@ -844,17 +754,33 @@ export default function PurchaseOrderPage({ products }: Props) {
             <table className="min-w-full text-[11px]">
               <thead className="bg-slate-50">
                 <tr>
+                  <th className="px-3 py-2 text-left text-slate-500 font-medium w-8">
+                    <input
+                      type="checkbox"
+                      checked={selectedOrderIds.size === purchaseOrders.length && purchaseOrders.length > 0}
+                      onChange={toggleSelectAll}
+                      className="rounded border-slate-300"
+                    />
+                  </th>
                   <th className="px-3 py-2 text-left text-slate-500 font-medium">Supplier</th>
                   <th className="px-3 py-2 text-left text-slate-500 font-medium">Notes</th>
                   <th className="px-3 py-2 text-left text-slate-500 font-medium">Date</th>
                   <th className="px-3 py-2 text-left text-slate-500 font-medium">Items</th>
                   <th className="px-3 py-2 text-left text-slate-500 font-medium">Status</th>
-                  <th className="px-3 py-2 text-left text-slate-500 font-medium">Update</th>
+                  <th className="px-3 py-2 text-left text-slate-500 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
                 {purchaseOrders.map((po) => (
                   <tr key={po._id}>
+                    <td className="px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={selectedOrderIds.has(po._id)}
+                        onChange={() => toggleSelectOrder(po._id)}
+                        className="rounded border-slate-300"
+                      />
+                    </td>
                     <td className="px-3 py-2 font-medium text-slate-800">{po.supplierName}</td>
                     <td className="px-3 py-2 text-slate-600">{po.notes || "-"}</td>
                     <td className="px-3 py-2 text-slate-600">
@@ -862,18 +788,17 @@ export default function PurchaseOrderPage({ products }: Props) {
                         type="date"
                         value={po.purchaseDate ? po.purchaseDate.slice(0, 10) : ""}
                         onChange={(e) => updatePurchaseOrderDate(po._id, e.target.value)}
-                        disabled={updatingDateId === po._id}
-                        className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-100 focus:border-blue-500 disabled:opacity-60"
+                        className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-100"
                       />
                     </td>
                     <td className="px-3 py-2 text-slate-600">
                       <div className="space-y-1">
                         {(po.items || []).map((it) => {
-                          const fallback = products.find((p) => p.id === String(it.productId));
-                          const name = it.productName || fallback?.name || "Unknown";
+                          const pName = getProductName(it.productId);
+                          const dName = it.designName || it.designCode || "Unknown design";
                           return (
-                            <div key={String(it.productId)}>
-                              {name} - {it.orderedQty} pcs
+                            <div key={`${String(it.productId)}-${String(it.designId)}`}>
+                              {pName} – {dName} – {it.orderedQty} pcs
                             </div>
                           );
                         })}
@@ -881,38 +806,28 @@ export default function PurchaseOrderPage({ products }: Props) {
                     </td>
                     <td className="px-3 py-2">
                       <span
-                        className={
-                          "inline-flex rounded-full px-2 py-1 text-[10px] font-medium " +
-                          (po.status === "VERIFIED"
+                        className={`inline-flex rounded-full px-2 py-1 text-[10px] font-medium ${
+                          po.status === "VERIFIED"
                             ? "bg-emerald-100 text-emerald-700"
-                            : po.status === "PARTIAL"
-                            ? "bg-amber-100 text-amber-700"
-                            : po.status === "CREATED"
-                            ? "bg-blue-100 text-blue-700"
-                            : "bg-slate-100 text-slate-700")
-                        }
+                            : "bg-slate-100 text-slate-700"
+                        }`}
                       >
                         {po.status}
                       </span>
                     </td>
                     <td className="px-3 py-2">
-                      <select
-                        value={po.status}
-                        disabled={updatingStatusId === po._id}
-                        onChange={(e) =>
-                          updatePurchaseOrderStatus(
-                            po._id,
-                            e.target.value as PurchaseOrderStatus
-                          )
-                        }
-                        className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-100 focus:border-blue-500 disabled:opacity-60"
-                      >
-                        {STATUS_OPTIONS.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
+                      {po.status === "PENDING" && (
+                        <button
+                          type="button"
+                          onClick={() => openVerifyModal(po)}
+                          className="rounded-lg bg-emerald-600 px-3 py-1 text-[11px] font-medium text-white hover:bg-emerald-500"
+                        >
+                          Verify
+                        </button>
+                      )}
+                      {po.status === "VERIFIED" && (
+                        <span className="text-[11px] text-slate-400">✅ Done</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -921,6 +836,95 @@ export default function PurchaseOrderPage({ products }: Props) {
           </div>
         )}
       </div>
+
+      {/* Verify Modal */}
+      {selectedVerifyOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl max-w-lg w-full p-6 space-y-4 shadow-xl">
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="text-base font-semibold text-slate-800">
+                  Verify Order – {selectedVerifyOrder.supplierName}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Enter received quantities for each product+design.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeVerifyModal}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="border border-slate-100 rounded-lg overflow-hidden">
+              <table className="min-w-full text-[11px]">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-slate-500 font-medium">Product</th>
+                    <th className="px-3 py-2 text-left text-slate-500 font-medium">Design</th>
+                    <th className="px-3 py-2 text-left text-slate-500 font-medium">Ordered</th>
+                    <th className="px-3 py-2 text-left text-slate-500 font-medium">Received</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {verifyItems.map((it) => (
+                    <tr key={`${it.productId}-${it.designId}`}>
+                      <td className="px-3 py-1.5">{it.productName}</td>
+                      <td className="px-3 py-1.5">{it.designName} ({it.designCode})</td>
+                      <td className="px-3 py-1.5">{it.orderedQty}</td>
+                      <td className="px-3 py-1.5">
+                        <input
+                          type="number"
+                          min={0}
+                          value={it.receivedQty}
+                          onChange={(e) => {
+                            const newVal = e.target.value;
+                            setVerifyItems((prev) =>
+                              prev.map((v) =>
+                                v.productId === it.productId && v.designId === it.designId
+                                  ? { ...v, receivedQty: newVal }
+                                  : v
+                              )
+                            );
+                          }}
+                          className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-100"
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {verifyError && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                {verifyError}
+              </p>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeVerifyModal}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={verifying}
+                onClick={handleVerify}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-60"
+              >
+                {verifying ? "Verifying..." : "Confirm Verify"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

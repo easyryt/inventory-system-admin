@@ -1,4 +1,3 @@
-// app/dashboard/inventory/page.tsx
 import { cookies } from "next/headers";
 import Link from "next/link";
 import InventoryList from "./InventoryList";
@@ -12,6 +11,16 @@ type InventoryRow = {
   minThreshold: number;
   isActive: boolean;
   barcodes?: string[];
+};
+
+type BackendProduct = {
+  _id: string;
+  name: string;
+  skuBase?: string;
+  categoryId?: {
+    _id: string;
+    name: string;
+  };
 };
 
 type Product = {
@@ -37,68 +46,101 @@ export default async function InventoryIndexPage() {
   const token = cookieStore.get("token")?.value;
 
   let products: Product[] = [];
-  const inventoriesByProduct: Record<string, InventoryRow[]> = {};
   let supplierByProduct: SupplierByProduct = {};
+  const inventoriesByProduct: Record<string, InventoryRow[]> = {};
 
   if (token) {
     try {
-      // 1) High-level inventory numbers per product
-      const productsRes = await fetch(
-        "https://inventory-system-ecew.onrender.com/api/dashboard/inventory-products",
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        }
-      );
+      // Get all active products.
+      const productsRes = await fetch("https://inventory-system-ecew.onrender.com/api/products", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+      });
+
+      let backendProducts: BackendProduct[] = [];
 
       if (productsRes.ok) {
-        const data = await productsRes.json();
-        if (Array.isArray(data)) {
-          products = data as Product[];
-        }
+        const productsData = await productsRes.json();
+        backendProducts = Array.isArray(productsData.products)
+          ? productsData.products
+          : [];
       }
 
-      // 2) Detailed inventory with barcodes for each product
+      // Get RAW and PRINTED model/design inventory for every product.
       await Promise.all(
-        products.map(async (p) => {
+        backendProducts.map(async (product) => {
           try {
-            const invRes = await fetch(
-              `https://inventory-system-ecew.onrender.com/api/inventory/with-barcodes/${p.id}`,
+            const inventoryRes = await fetch(
+              `https://inventory-system-ecew.onrender.com/api/inventory/design/${product._id}`,
               {
-                headers: { Authorization: `Bearer ${token}` },
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                },
                 cache: "no-store",
               }
             );
 
-            if (invRes.ok) {
-              const invData = await invRes.json();
-              inventoriesByProduct[p.id] = Array.isArray(invData.inventory)
-                ? invData.inventory
-                : [];
-            } else {
-              inventoriesByProduct[p.id] = [];
-            }
+            const inventoryData = inventoryRes.ok
+              ? await inventoryRes.json()
+              : {};
+
+            const rows: InventoryRow[] = Array.isArray(inventoryData.inventory)
+              ? inventoryData.inventory
+              : [];
+
+            inventoriesByProduct[product._id] = rows;
           } catch {
-            inventoriesByProduct[p.id] = [];
+            inventoriesByProduct[product._id] = [];
           }
         })
       );
 
-      // 3) Latest supplier info per product
-      const supRes = await fetch(
+      // Build display data from the actual inventory documents.
+      products = backendProducts.map((product) => {
+        const rows = inventoriesByProduct[product._id] || [];
+
+        const rawQuantity = rows
+          .filter((row) => row.type === "RAW")
+          .reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+
+        const printedQuantity = rows
+          .filter((row) => row.type === "PRINTED")
+          .reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+
+        const minThreshold = rows.reduce(
+          (sum, row) => sum + Number(row.minThreshold || 0),
+          0
+        );
+
+        return {
+          id: product._id,
+          name: product.name,
+          categoryName: product.categoryId?.name || "-",
+          rawQuantity,
+          printedQuantity,
+          minThreshold,
+        };
+      });
+
+      // Supplier data remains optional.
+      const supplierRes = await fetch(
         "https://inventory-system-ecew.onrender.com/api/dashboard/inventory-supplier",
         {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
           cache: "no-store",
         }
       );
 
-      if (supRes.ok) {
-        const supData = await supRes.json();
-        supplierByProduct = (supData as any).supplierByProduct || {};
+      if (supplierRes.ok) {
+        const supplierData = await supplierRes.json();
+        supplierByProduct = supplierData.supplierByProduct || {};
       }
     } catch (err) {
-      console.error("Load inventory index error", err);
+      console.error("Load inventory page error:", err);
     }
   }
 
@@ -108,9 +150,10 @@ export default async function InventoryIndexPage() {
         <div>
           <h1 className="text-lg font-semibold">Inventory</h1>
           <p className="text-xs text-slate-500">
-            All products with RAW &amp; PRINTED stock, supplier details, and barcodes.
+            RAW and PRINTED stock grouped by product and model/design.
           </p>
         </div>
+
         <Link
           href="/dashboard/purchase-orders"
           className="text-[11px] text-blue-700 hover:underline"

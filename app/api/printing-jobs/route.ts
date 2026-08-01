@@ -1,4 +1,3 @@
-// app/api/printing-jobs/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
@@ -13,12 +12,16 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
 
-    const searchParams = req.nextUrl.searchParams.toString();
-    const url =
-      `${BACKEND_URL}/api/printing-jobs` +
-      (searchParams ? `?${searchParams}` : "");
+    const kind = req.nextUrl.searchParams.get("kind");
 
-    const res = await fetch(url, {
+    // This uses the existing Express GET /api/products route.
+    // No change to product files is needed.
+    const targetUrl =
+      kind === "products"
+        ? `${BACKEND_URL}/api/products`
+        : `${BACKEND_URL}/api/printing-jobs`;
+
+    const res = await fetch(targetUrl, {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -26,10 +29,15 @@ export async function GET(req: NextRequest) {
     });
 
     const data = await res.json().catch(() => ({}));
+
     return NextResponse.json(data, { status: res.status });
   } catch (err) {
-    console.error("GET /api/printing-jobs proxy error", err);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    console.error("GET /api/printing-jobs proxy error:", err);
+
+    return NextResponse.json(
+      { message: "Server error" },
+      { status: 500 }
+    );
   }
 }
 
@@ -54,9 +62,14 @@ export async function POST(req: NextRequest) {
     });
 
     const data = await res.json().catch(() => ({}));
+
     return NextResponse.json(data, { status: res.status });
   } catch (err) {
-    console.error("POST /api/printing-jobs proxy error", err);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    console.error("POST /api/printing-jobs proxy error:", err);
+
+    return NextResponse.json(
+      { message: "Server error" },
+      { status: 500 }
+    );
   }
 }

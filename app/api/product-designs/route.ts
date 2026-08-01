@@ -3,40 +3,34 @@ import { cookies } from "next/headers";
 
 const BACKEND_URL = "https://inventory-system-ecew.onrender.com";
 
+// POST /api/product-designs
 export async function POST(req: NextRequest) {
   try {
-    const cookieStore = await cookies();
-    const token = cookieStore.get("token")?.value;
-
-    if (!token) {
-      return NextResponse.json(
-        { message: "Unauthorized" },
-        { status: 401 }
-      );
-    }
-
+      const cookieStore = await cookies();
+        const token = cookieStore.get("token")?.value;
+        if (!token) {
+          return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+        }
+    
     const body = await req.json();
 
-    // Must send: productId, designId, quantity, minThreshold?
-    const res = await fetch(`${BACKEND_URL}/api/inventory/raw/design`, {
+    const res = await fetch(`${BACKEND_URL}/api/product-designs`, {
       method: "POST",
-      headers: {
+     headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(body),
-      cache: "no-store",
     });
 
     const data = await res.json().catch(() => ({}));
 
     return NextResponse.json(data, { status: res.status });
-  } catch (err) {
-    console.error("POST /api/inventory/raw proxy error:", err);
-
+  } catch (error) {
+    console.error("POST /api/product-designs error:", error);
     return NextResponse.json(
       { message: "Server error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
