@@ -1,3 +1,4 @@
+// app/dashboard/barcodes/[productId]/page.tsx
 import { cookies } from "next/headers";
 import BarcodeCreateForm from "./BarcodeCreateForm";
 import BarcodeManager, { type BarcodeDesignGroup } from "./BarcodeList";
@@ -23,6 +24,7 @@ async function fetchPageData(productId: string, token: string) {
   ]);
   const productData = productResult.status === "fulfilled" ? productResult.value : null;
   const designsData = designsResult.status === "fulfilled" ? designsResult.value : {};
+  // ✅ Fix: use barcodesResult.value, not barcodeData
   const barcodeData = barcodesResult.status === "fulfilled" ? barcodesResult.value : {};
   const product = productData && ("product" in productData ? productData.product : productData);
   const designs = Array.isArray(designsData.designs) ? designsData.designs : [];
@@ -35,8 +37,13 @@ export default async function ManageBarcodesPage({ params }: { params: Promise<{
   const { productId } = await params;
   const token = (await cookies()).get("token")?.value;
   if (!token) return <p className="text-xs text-red-600">You must be logged in as ADMIN or PRINTER.</p>;
+
   const { product, designs, byDesign } = await fetchPageData(productId, token);
-  const productName = product?.name ?? `Product ${productId}`;
+
+  // ✅ Safe name extraction – handles both Product and { product: Product } shapes
+  const productDataSafe = product && 'name' in product ? product : product?.product;
+  const productName = productDataSafe?.name ?? `Product ${productId}`;
+
   const barcodeGroups: BarcodeDesignGroup[] = designs.map((design) => ({
     _id: design._id,
     productName,
@@ -47,9 +54,14 @@ export default async function ManageBarcodesPage({ params }: { params: Promise<{
     rows: byDesign[design.designCode] ?? [],
   }));
 
-  return <div className="space-y-5">
-    <div><h1 className="text-lg font-semibold">Manage Barcodes</h1><p className="text-xs text-slate-500">Product: {productName}</p></div>
-    <BarcodeCreateForm productId={productId} designs={designs} />
-    <BarcodeManager designs={barcodeGroups} />
-  </div>;
+  return (
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-lg font-semibold">Manage Barcodes</h1>
+        <p className="text-xs text-slate-500">Product: {productName}</p>
+      </div>
+      <BarcodeCreateForm productId={productId} designs={designs} />
+      <BarcodeManager designs={barcodeGroups} />
+    </div>
+  );
 }
