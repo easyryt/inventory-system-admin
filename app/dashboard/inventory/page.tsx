@@ -118,6 +118,7 @@ export default async function InventoryIndexPage() {
           id: product._id,
           name: product.name,
           categoryName: product.categoryId?.name || "-",
+          designUrl:product?.designUrl || null,
           rawQuantity,
           printedQuantity,
           minThreshold,

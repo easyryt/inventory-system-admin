@@ -17,9 +17,10 @@ const NAV_LINKS: NavLink[] = [
   { label: "Products", href: "/dashboard/products", matchPrefix: true },
   { label: "Product Designs", href: "/dashboard/product-designs", matchPrefix: true },
   { label: "Inventory", href: "/dashboard/inventory", matchPrefix: true },
-    { label: "Printing Jobs", href: "/dashboard/printing-jobs", matchPrefix: true },
+    { label: "Add Stocks", href: "/dashboard/printing-jobs", matchPrefix: true },
   { label: "Purchase Orders", href: "/dashboard/purchase-orders", matchPrefix: true },
   { label: "Today's Packed Items", href: "/dashboard/barcode-report", matchPrefix: true },
+  { label: "ImageKit Images", href: "/dashboard/imagekit-images", matchPrefix: true },
 ];
 
 function isActive(pathname: string, link: NavLink) {

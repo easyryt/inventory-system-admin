@@ -2,12 +2,18 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+type CategoryPopulated = {
+  _id: string;
+  name: string;
+};
+
 type PopulatedValue = {
   _id: string;
   name: string;
   skuBase?: string;
   mode?: string;
   designCode?: string;
+  categoryId?: CategoryPopulated; // Added for product population
 };
 
 type PrintingJob = {
@@ -22,14 +28,22 @@ type PrintingJob = {
   createdAt: string;
 };
 
+// Extract human‑readable name from populated or plain ID
 const getName = (value: PopulatedValue | string | undefined) => {
   if (!value) return "-";
   return typeof value === "string" ? value : value.name;
 };
 
+// Extract mode if design is populated
 const getMode = (value: PopulatedValue | string | undefined) => {
   if (!value || typeof value === "string") return "";
   return value.mode || "";
+};
+
+// Extract category name from a populated product object
+const getCategoryName = (value: PopulatedValue | string | undefined) => {
+  if (!value || typeof value === "string") return "-";
+  return value.categoryId?.name || "-";
 };
 
 const getErrorMessage = async (res: Response, fallback: string) => {
@@ -68,7 +82,7 @@ export default function PrintingJobsList() {
       setError(
         err instanceof Error
           ? err.message
-          : "Could not load printing-job history"
+          : "Could not load printing-job history",
       );
     } finally {
       setLoading(false);
@@ -79,7 +93,6 @@ export default function PrintingJobsList() {
     loadJobs();
 
     const refreshList = () => loadJobs();
-
     window.addEventListener("printing-jobs:changed", refreshList);
 
     return () => {
@@ -118,7 +131,7 @@ export default function PrintingJobsList() {
 
       if (!res.ok) {
         throw new Error(
-          await getErrorMessage(res, "Could not update printing job")
+          await getErrorMessage(res, "Could not update printing job"),
         );
       }
 
@@ -126,7 +139,7 @@ export default function PrintingJobsList() {
       await loadJobs();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Could not update printing job"
+        err instanceof Error ? err.message : "Could not update printing job",
       );
     } finally {
       setSavingId(null);
@@ -135,7 +148,7 @@ export default function PrintingJobsList() {
 
   const deleteJob = async (job: PrintingJob) => {
     const confirmed = window.confirm(
-      `Delete the printing job for ${getName(job.productId)}?`
+      `Delete the printing job for ${getName(job.productId)}?`,
     );
 
     if (!confirmed) return;
@@ -150,14 +163,14 @@ export default function PrintingJobsList() {
 
       if (!res.ok) {
         throw new Error(
-          await getErrorMessage(res, "Could not delete printing job")
+          await getErrorMessage(res, "Could not delete printing job"),
         );
       }
 
       await loadJobs();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Could not delete printing job"
+        err instanceof Error ? err.message : "Could not delete printing job",
       );
     } finally {
       setDeletingId(null);
@@ -169,7 +182,7 @@ export default function PrintingJobsList() {
       <div className="mb-5 flex items-center justify-between">
         <div>
           <h2 className="text-base font-semibold text-slate-800">
-            Printing Job History
+            Added Product To Stock History
           </h2>
           <p className="text-xs text-slate-500">
             View, update, or delete pending printing jobs.
@@ -194,6 +207,7 @@ export default function PrintingJobsList() {
         <table className="min-w-full text-left text-sm">
           <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-600">
             <tr>
+              <th className="p-3">Category</th>
               <th className="p-3">Product</th>
               <th className="p-3">Model / Design</th>
               <th className="p-3">Quantity</th>
@@ -207,7 +221,7 @@ export default function PrintingJobsList() {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={7} className="p-6 text-center text-slate-500">
+                <td colSpan={8} className="p-6 text-center text-slate-500">
                   Loading history...
                 </td>
               </tr>
@@ -215,7 +229,7 @@ export default function PrintingJobsList() {
 
             {!loading && jobs.length === 0 && (
               <tr>
-                <td colSpan={7} className="p-6 text-center text-slate-500">
+                <td colSpan={8} className="p-6 text-center text-slate-500">
                   No printing jobs found.
                 </td>
               </tr>
@@ -229,6 +243,11 @@ export default function PrintingJobsList() {
 
                 return (
                   <tr key={job._id} className="border-b border-slate-100">
+                    {/* Category column */}
+                    <td className="p-3 text-xs text-slate-600">
+                      {getCategoryName(job.productId)}
+                    </td>
+
                     <td className="p-3 font-medium text-slate-800">
                       {getName(job.productId)}
                     </td>

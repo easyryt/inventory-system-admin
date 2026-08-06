@@ -9,6 +9,7 @@ type InventoryRow = {
   productId: string;
   type: "RAW" | "PRINTED";
   designCode: string | null;
+  designUrl: string | null;
   quantity: number;
   minThreshold: number;
   isActive: boolean;
@@ -50,7 +51,7 @@ type Props = {
   products: Product[];
   inventoriesByProduct: Record<string, InventoryRow[]>;
   supplierByProduct: Record<string, SupplierInfo>;
-  lowStockItems?: LowStockItem[];       // 👈 optional – for the low‑stock button
+  lowStockItems?: LowStockItem[];
 };
 
 // ---------- Helper: badge for inventory type ----------
@@ -73,7 +74,7 @@ export default function InventoryList({
   products,
   inventoriesByProduct,
   supplierByProduct,
-  lowStockItems = [],           // default empty
+  lowStockItems = [],
 }: Props) {
   // ----- Filter states -----
   const [search, setSearch] = useState("");
@@ -88,6 +89,9 @@ export default function InventoryList({
   const [error, setError] = useState<string | null>(null);
   const [successId, setSuccessId] = useState<string | null>(null);
 
+  // ----- Modal state -----
+  const [modalImage, setModalImage] = useState<string | null>(null);
+
   // ----- Derived: distinct categories -----
   const categories = useMemo(() => {
     const set = new Set(products.map((p) => p.categoryName).filter(Boolean));
@@ -98,7 +102,6 @@ export default function InventoryList({
   const filteredProducts = useMemo(() => {
     let result = products;
 
-    // Search by product name or design codes inside its rows
     if (search.trim()) {
       const q = search.toLowerCase();
       result = result.filter((product) => {
@@ -111,12 +114,10 @@ export default function InventoryList({
       });
     }
 
-    // Category filter
     if (categoryFilter) {
       result = result.filter((p) => p.categoryName === categoryFilter);
     }
 
-    // Type filter & low‑stock filter
     if (typeFilter !== "ALL" || showLowStockOnly) {
       result = result.filter((product) => {
         const rows = inventoriesByProduct[product.id] || [];
@@ -137,7 +138,6 @@ export default function InventoryList({
       });
     }
 
-    // Sort alphabetically by product name
     return result.sort((a, b) => a.name.localeCompare(b.name));
   }, [
     products,
@@ -272,14 +272,12 @@ export default function InventoryList({
             Below threshold only
           </label>
 
-          
-            <Link
-              href="/dashboard/inventory/low-stock"
-              className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700 hover:bg-red-100"
-            >
-              ⚠️ Low Stock
-            </Link>
-         
+          <Link
+            href="/dashboard/inventory/low-stock"
+            className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700 hover:bg-red-100"
+          >
+            ⚠️ Low Stock
+          </Link>
         </div>
 
         {/* Clear filters */}
@@ -326,7 +324,6 @@ export default function InventoryList({
             .filter((row) => row.type === "PRINTED")
             .reduce((sum, row) => sum + Number(row.quantity || 0), 0);
 
-          // Barcode stats (deduplicated per design)
           const barcodeByDesign = new Map<
             string,
             { total: number; available: number; used: number }
@@ -440,14 +437,8 @@ export default function InventoryList({
                 <div className="mt-4 overflow-x-auto">
                   <table className="min-w-full text-left text-xs">
                     <thead className="bg-slate-50 text-slate-600">
-                      <tr>
-                        <th className="p-2">Type</th>
-                        <th className="p-2">Design</th>
-                        <th className="p-2">Qty</th>
-                        <th className="p-2">Available</th>
-                        <th className="p-2">Used</th>
-                        <th className="p-2">Min threshold</th>
-                      </tr>
+                      {/* No whitespace between <tr> and <th> – inline all to avoid hydration error */}
+                      <tr><th className="p-2">Image</th><th className="p-2">Type</th><th className="p-2">Design</th><th className="p-2">Qty</th><th className="p-2">Available</th><th className="p-2">Used</th><th className="p-2">Min threshold</th></tr>
                     </thead>
                     <tbody>
                       {rows.map((row) => {
@@ -456,22 +447,30 @@ export default function InventoryList({
                           row.quantity <= row.minThreshold;
 
                         return (
+                          // Inline <tr> and <td> elements to avoid whitespace nodes
                           <tr
                             key={row._id}
-                            className={`border-b border-slate-100 ${
-                              isLow ? "bg-red-50" : ""
-                            }`}
+                            className={`border-b border-slate-100 ${isLow ? "bg-red-50" : ""}`}
                           >
                             <td className="p-2">
-                              <TypeBadge type={row.type} />
+                              {row.designUrl ? (
+                                <img
+                                  src={row.designUrl}
+                                  alt={row.designCode || "Design"}
+                                  className="h-8 w-8 rounded object-cover border border-slate-200 cursor-pointer hover:opacity-80"
+                                  onClick={() => setModalImage(row.designUrl)}
+                                  onError={(e) => {
+                                    (e.target as HTMLImageElement).style.display = "none";
+                                  }}
+                                />
+                              ) : (
+                                <span className="text-slate-300">—</span>
+                              )}
                             </td>
-                            <td className="p-2 font-mono text-[11px]">
-                              {row.designCode || "-"}
-                            </td>
+                            <td className="p-2"><TypeBadge type={row.type} /></td>
+                            <td className="p-2 font-mono text-[11px]">{row.designCode || "-"}</td>
                             <td className="p-2">{row.quantity}</td>
-                            <td className="p-2">
-                              {row.availableBarcodes ?? 0}
-                            </td>
+                            <td className="p-2">{row.availableBarcodes ?? 0}</td>
                             <td className="p-2">{row.usedBarcodes ?? 0}</td>
                             <td className="p-2">
                               {editingId === row._id ? (
@@ -479,9 +478,7 @@ export default function InventoryList({
                                   <input
                                     type="number"
                                     value={editValue}
-                                    onChange={(e) =>
-                                      setEditValue(e.target.value)
-                                    }
+                                    onChange={(e) => setEditValue(e.target.value)}
                                     onKeyDown={(e) => handleKeyDown(e, row._id)}
                                     onBlur={() => saveThreshold(row._id)}
                                     className="w-16 rounded border border-slate-300 px-1 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -524,14 +521,10 @@ export default function InventoryList({
                                 </button>
                               )}
                               {successId === row._id && (
-                                <span className="ml-1 text-green-600 text-xs">
-                                  ✓
-                                </span>
+                                <span className="ml-1 text-green-600 text-xs">✓</span>
                               )}
                               {error && editingId === row._id && (
-                                <span className="ml-1 text-red-600 text-xs">
-                                  {error}
-                                </span>
+                                <span className="ml-1 text-red-600 text-xs">{error}</span>
                               )}
                             </td>
                           </tr>
@@ -544,6 +537,31 @@ export default function InventoryList({
             </section>
           );
         })
+      )}
+
+      {/* ---------- IMAGE MODAL ---------- */}
+      {modalImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+          onClick={() => setModalImage(null)}
+        >
+          <div
+            className="relative max-h-[90vh] max-w-[90vw] rounded-lg bg-white p-2 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="absolute -top-3 -right-3 flex h-8 w-8 items-center justify-center rounded-full bg-white text-slate-600 shadow hover:bg-slate-100"
+              onClick={() => setModalImage(null)}
+            >
+              ✕
+            </button>
+            <img
+              src={modalImage}
+              alt="Design preview"
+              className="max-h-[85vh] max-w-full rounded object-contain"
+            />
+          </div>
+        </div>
       )}
     </div>
   );

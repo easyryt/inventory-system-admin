@@ -6,11 +6,9 @@ const BACKEND_URL = "https://inventory-system-ecew.onrender.com";
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }   // 👈 now a Promise
+  { params }: { params: { id: string } }
 ) {
   try {
-    const { id } = await params;   // 👈 unwrap it
-
     const cookieStore = await cookies();
     const token = cookieStore.get("token")?.value;
 
@@ -21,7 +19,7 @@ export async function PATCH(
     const body = await req.json();
 
     const res = await fetch(
-      `${BACKEND_URL}/api/barcodes/${id}/status`,
+      `${BACKEND_URL}/api/barcodes/${params.id}/status`,
       {
         method: "PATCH",
         headers: {

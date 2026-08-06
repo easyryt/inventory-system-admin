@@ -10,5 +10,5 @@ export function getBaseUrl() {
   }
 
   // Local dev fallback
-  return "http://localhost:3000";
+  return "https://inventory-system-ecew.onrender.com";
 }
