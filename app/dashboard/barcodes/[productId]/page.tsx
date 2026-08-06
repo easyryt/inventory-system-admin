@@ -26,6 +26,8 @@ type ProductDesign = {
   designUrl?: string;
 };
 
+type ProductResponse = Product | { product?: Product };
+
 type BarcodesByDesign = Record<string, BarcodeRow[]>;
 
 const API = "https://inventory-system-ecew.onrender.com/api";
@@ -35,13 +37,23 @@ const json = async <T,>(response: Response): Promise<T> => {
 
   if (!response.ok) {
     throw new Error(
-      (data as { message?: string }).message ||
+      (data as { message?: string }).message ??
         "Could not load barcode data."
     );
   }
 
   return data as T;
 };
+
+function isWrappedProduct(
+  value: ProductResponse
+): value is { product?: Product } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "product" in value
+  );
+}
 
 async function fetchPageData(productId: string, token: string) {
   const headers = {
@@ -53,7 +65,7 @@ async function fetchPageData(productId: string, token: string) {
       fetch(`${API}/products/${productId}`, {
         headers,
         cache: "no-store",
-      }).then(json<{ product?: Product } | Product>),
+      }).then(json<ProductResponse>),
 
       fetch(`${API}/printing-jobs/designs/${productId}`, {
         headers,
@@ -71,32 +83,27 @@ async function fetchPageData(productId: string, token: string) {
       ),
     ]);
 
-  const productData =
-    productResult.status === "fulfilled"
-      ? productResult.value
-      : null;
+  let product: Product | null = null;
 
-  const designsData =
+  if (productResult.status === "fulfilled") {
+    const data = productResult.value;
+
+    if (isWrappedProduct(data)) {
+      product = data.product ?? null;
+    } else {
+      product = data;
+    }
+  }
+
+  const designs =
     designsResult.status === "fulfilled"
-      ? designsResult.value
-      : { designs: [] };
+      ? (designsResult.value.designs ?? [])
+      : [];
 
   const barcodeData =
     barcodesResult.status === "fulfilled"
       ? barcodesResult.value
       : {};
-
-  let product: Product | null = null;
-
-  if (productData) {
-    if ("product" in productData) {
-      product = productData.product ?? null;
-    } else {
-      product = productData;
-    }
-  }
-
-  const designs = designsData.designs ?? [];
 
   const byDesign: BarcodesByDesign =
     barcodeData.barcodesByDesign ?? {};
