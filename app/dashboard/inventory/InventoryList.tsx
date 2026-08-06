@@ -9,7 +9,8 @@ type InventoryRow = {
   productId: string;
   type: "RAW" | "PRINTED";
   designCode: string | null;
-  designUrl: string | null;
+  // Optional so rows that do not yet store an image can still be displayed.
+  designUrl?: string | null;
   quantity: number;
   minThreshold: number;
   isActive: boolean;
