@@ -459,7 +459,7 @@ export default function InventoryList({
                                   src={row.designUrl}
                                   alt={row.designCode || "Design"}
                                   className="h-8 w-8 rounded object-cover border border-slate-200 cursor-pointer hover:opacity-80"
-                                  onClick={() => setModalImage(row.designUrl)}
+                                  onClick={() => setModalImage(row.designUrl ?? null)}
                                   onError={(e) => {
                                     (e.target as HTMLImageElement).style.display = "none";
                                   }}
