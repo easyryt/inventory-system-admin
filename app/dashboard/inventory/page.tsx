@@ -17,6 +17,7 @@ type BackendProduct = {
   _id: string;
   name: string;
   skuBase?: string;
+  designUrl?: string | null;
   categoryId?: {
     _id: string;
     name: string;
@@ -27,6 +28,7 @@ type Product = {
   id: string;
   name: string;
   categoryName: string;
+  designUrl?: string | null;
   rawQuantity: number;
   printedQuantity: number;
   minThreshold: number;
@@ -51,24 +53,30 @@ export default async function InventoryIndexPage() {
 
   if (token) {
     try {
-      // Get all active products.
-      const productsRes = await fetch("https://inventory-system-ecew.onrender.com/api/products", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        cache: "no-store",
-      });
+      // Products
+      const productsRes = await fetch(
+        "https://inventory-system-ecew.onrender.com/api/products",
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          cache: "no-store",
+        }
+      );
 
       let backendProducts: BackendProduct[] = [];
 
       if (productsRes.ok) {
         const productsData = await productsRes.json();
+
         backendProducts = Array.isArray(productsData.products)
           ? productsData.products
+          : Array.isArray(productsData)
+          ? productsData
           : [];
       }
 
-      // Get RAW and PRINTED model/design inventory for every product.
+      // Inventory
       await Promise.all(
         backendProducts.map(async (product) => {
           try {
@@ -97,9 +105,9 @@ export default async function InventoryIndexPage() {
         })
       );
 
-      // Build display data from the actual inventory documents.
+      // Build display data
       products = backendProducts.map((product) => {
-        const rows = inventoriesByProduct[product._id] || [];
+        const rows = inventoriesByProduct[product._id] ?? [];
 
         const rawQuantity = rows
           .filter((row) => row.type === "RAW")
@@ -110,22 +118,22 @@ export default async function InventoryIndexPage() {
           .reduce((sum, row) => sum + Number(row.quantity || 0), 0);
 
         const minThreshold = rows.reduce(
-          (sum, row) => sum + Number(row.minThreshold || 0),
+          (sum, row) => Math.max(sum, Number(row.minThreshold || 0)),
           0
         );
 
         return {
           id: product._id,
           name: product.name,
-          categoryName: product.categoryId?.name || "-",
-          designUrl:product?.designUrl || null,
+          categoryName: product.categoryId?.name ?? "-",
+          designUrl: product.designUrl ?? null,
           rawQuantity,
           printedQuantity,
           minThreshold,
         };
       });
 
-      // Supplier data remains optional.
+      // Supplier information
       const supplierRes = await fetch(
         "https://inventory-system-ecew.onrender.com/api/dashboard/inventory-supplier",
         {
@@ -138,7 +146,7 @@ export default async function InventoryIndexPage() {
 
       if (supplierRes.ok) {
         const supplierData = await supplierRes.json();
-        supplierByProduct = supplierData.supplierByProduct || {};
+        supplierByProduct = supplierData.supplierByProduct ?? {};
       }
     } catch (err) {
       console.error("Load inventory page error:", err);
