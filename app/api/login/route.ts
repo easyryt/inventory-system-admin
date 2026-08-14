@@ -1,7 +1,7 @@
 // app/api/login/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
-const BACKEND_URL = " https://inventory-system-24ly.onrender.com";
+const BACKEND_URL = " https://inventory-system-ecew.onrender.com";
 
 export async function POST(req: NextRequest) {
   try {

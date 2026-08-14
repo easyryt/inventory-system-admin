@@ -10,5 +10,5 @@ export function getBaseUrl() {
   }
 
   // Local dev fallback
-  return " https://inventory-system-24ly.onrender.com";
+  return " https://inventory-system-ecew.onrender.com";
 }

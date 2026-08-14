@@ -29,7 +29,7 @@ type BarcodesByDesign = Record<string, BarcodeRow[]>;
 type ProductResponse = { product?: Product };
 
 // Removed the unwanted space before http.
-const API = "https://inventory-system-24ly.onrender.com/api";
+const API = "https://inventory-system-ecew.onrender.com/api";
 
 const json = async <T,>(response: Response): Promise<T> => {
   const data = await response.json().catch(() => ({}));

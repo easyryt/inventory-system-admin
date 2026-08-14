@@ -67,7 +67,7 @@ type Props = {
   token: string;
 };
 
-const API_URL = "https://inventory-system-24ly.onrender.com/api/product-designs";
+const API_URL = "https://inventory-system-ecew.onrender.com/api/product-designs";
 const IMAGEKIT_AUTH_URL = "/api/imagekit-auth";
 const IMAGEKIT_PUBLIC_KEY = process.env.NEXT_PUBLIC_IMAGEKIT_PUBLIC_KEY!;
 const IMAGEKIT_UPLOAD_URL = "https://upload.imagekit.io/api/v1/files/upload";
