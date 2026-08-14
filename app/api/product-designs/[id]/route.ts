@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
-const BACKEND_URL = "https://inventory-system-ecew.onrender.com";
+const BACKEND_URL = " https://inventory-system-24ly.onrender.com";
 
 // PUT /api/product-designs/:id
 export async function PUT(
@@ -9,18 +9,13 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const { id } = await params;
-
     const cookieStore = await cookies();
     const token = cookieStore.get("token")?.value;
-
     if (!token) {
-      return NextResponse.json(
-        { message: "Unauthorized" },
-        { status: 401 }
-      );
+      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
 
+    const { id } = await params;
     const body = await req.json();
 
     const res = await fetch(`${BACKEND_URL}/api/product-designs/${id}`, {
@@ -34,16 +29,10 @@ export async function PUT(
 
     const data = await res.json().catch(() => ({}));
 
-    return NextResponse.json(data, {
-      status: res.status,
-    });
+    return NextResponse.json(data, { status: res.status });
   } catch (error) {
     console.error("PUT /api/product-designs/:id error:", error);
-
-    return NextResponse.json(
-      { message: "Server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ message: "Server error" }, { status: 500 });
   }
 }
 
@@ -55,33 +44,18 @@ export async function DELETE(
   try {
     const { id } = await params;
 
-    const cookieStore = await cookies();
-    const token = cookieStore.get("token")?.value;
-
-    const headers: HeadersInit = {
-      "Content-Type": "application/json",
-    };
-
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-
     const res = await fetch(`${BACKEND_URL}/api/product-designs/${id}`, {
       method: "DELETE",
-      headers,
+      headers: {
+        "Content-Type": "application/json",
+      },
     });
 
     const data = await res.json().catch(() => ({}));
 
-    return NextResponse.json(data, {
-      status: res.status,
-    });
+    return NextResponse.json(data, { status: res.status });
   } catch (error) {
     console.error("DELETE /api/product-designs/:id error:", error);
-
-    return NextResponse.json(
-      { message: "Server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ message: "Server error" }, { status: 500 });
   }
 }

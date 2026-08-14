@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
-const BACKEND_URL = "https://inventory-system-ecew.onrender.com";
+const BACKEND_URL = "https://inventory-system-24ly.onrender.com";
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,8 +17,8 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json();
 
-    // Must send: productId, designId, quantity, minThreshold?
-    const res = await fetch(`${BACKEND_URL}/api/inventory/raw/design`, {
+    // Send: productId, quantity, minThreshold?
+    const res = await fetch(`${BACKEND_URL}/api/inventory/raw`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

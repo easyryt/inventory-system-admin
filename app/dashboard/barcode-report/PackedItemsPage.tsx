@@ -35,7 +35,7 @@ type Design = {
   designUrl?: string;
 };
 
-const API_BASE = "https://inventory-system-ecew.onrender.com/api";
+const API_BASE = " https://inventory-system-24ly.onrender.com/api";
 const formatDateTime = (value: string) => new Date(value).toLocaleString();
 
 export default function PackedItemsPage({ token }: { token: string }) {

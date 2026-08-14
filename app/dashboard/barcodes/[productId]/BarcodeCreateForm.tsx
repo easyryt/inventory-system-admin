@@ -19,7 +19,6 @@ export default function BarcodeCreateForm({ productId, designs }: Props) {
   const router = useRouter();
 
   const [designId, setDesignId] = useState("");
-  const [quantity, setQuantity] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -30,8 +29,8 @@ export default function BarcodeCreateForm({ productId, designs }: Props) {
     setError("");
     setMessage("");
 
-    if (!designId || !quantity || Number(quantity) < 1) {
-      setError("Select a model/design and enter a quantity greater than 0.");
+    if (!designId) {
+      setError("Select a model/design first.");
       return;
     }
 
@@ -46,7 +45,6 @@ export default function BarcodeCreateForm({ productId, designs }: Props) {
         body: JSON.stringify({
           productId,
           designId,
-          quantity: Number(quantity),
         }),
       });
 
@@ -57,10 +55,9 @@ export default function BarcodeCreateForm({ productId, designs }: Props) {
       }
 
       setMessage(
-        `${data.barcodes?.length || quantity} barcode(s) generated successfully.`
+        `${data.barcodeCount || data.barcodes?.length || 0} barcode(s) generated successfully.`
       );
       setDesignId("");
-      setQuantity("");
 
       // Reload barcode history on the current page.
       router.refresh();
@@ -80,7 +77,7 @@ export default function BarcodeCreateForm({ productId, designs }: Props) {
           Generate Barcodes
         </h2>
         <p className="mt-1 text-xs text-slate-500">
-          Select the model/design and number of barcode labels to generate.
+          Select the model/design. Barcodes are generated automatically for its unlabelled PRINTED stock.
         </p>
       </div>
 
@@ -98,7 +95,7 @@ export default function BarcodeCreateForm({ productId, designs }: Props) {
 
       <form
         onSubmit={handleSubmit}
-        className="grid grid-cols-1 gap-3 md:grid-cols-3"
+        className="grid grid-cols-1 gap-3 md:grid-cols-2"
       >
         <div className="md:col-span-2">
           <label className="mb-1 block text-xs font-medium text-slate-700">
@@ -121,21 +118,7 @@ export default function BarcodeCreateForm({ productId, designs }: Props) {
           </select>
         </div>
 
-        <div>
-          <label className="mb-1 block text-xs font-medium text-slate-700">
-            Barcode Quantity *
-          </label>
 
-          <input
-            type="number"
-            min="1"
-            value={quantity}
-            onChange={(event) => setQuantity(event.target.value)}
-            placeholder="Example: 50"
-            className="w-full rounded-md border border-slate-300 p-2 text-sm"
-            required
-          />
-        </div>
 
         <div className="md:col-span-3">
           <button

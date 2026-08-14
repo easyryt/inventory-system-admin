@@ -22,7 +22,7 @@ export default async function CategoriesPage() {
   let categories: Category[] = [];
 
   if (token) {
-    const res = await fetch("https://inventory-system-ecew.onrender.com/api/categories", {
+    const res = await fetch(" https://inventory-system-24ly.onrender.com/api/categories", {
       headers: {
         Authorization: `Bearer ${token}`,
       },

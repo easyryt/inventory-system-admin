@@ -1,8 +1,7 @@
 import { cookies } from "next/headers";
+import BackButton from "./BackButton";
 import BarcodeCreateForm from "./BarcodeCreateForm";
-import BarcodeManager, {
-  type BarcodeDesignGroup,
-} from "./BarcodeList";
+import BarcodeManager, { type BarcodeDesignGroup } from "./BarcodeList";
 
 type BarcodeRow = {
   _id: string;
@@ -26,34 +25,34 @@ type ProductDesign = {
   designUrl?: string;
 };
 
-type ProductResponse = Product | { product?: Product };
-
 type BarcodesByDesign = Record<string, BarcodeRow[]>;
+type ProductResponse = { product?: Product };
 
-const API = "https://inventory-system-ecew.onrender.com/api";
+// Removed the unwanted space before http.
+const API = "https://inventory-system-24ly.onrender.com/api";
 
 const json = async <T,>(response: Response): Promise<T> => {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
     throw new Error(
-      (data as { message?: string }).message ??
-        "Could not load barcode data."
+      (data as { message?: string }).message ||
+        "Could not load barcode data.",
     );
   }
 
   return data as T;
 };
 
-function isWrappedProduct(
-  value: ProductResponse
-): value is { product?: Product } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "product" in value
-  );
-}
+const unwrapProduct = (
+  data: Product | ProductResponse | null,
+): Product | null => {
+  if (!data) {
+    return null;
+  }
+
+  return "name" in data ? data : data.product ?? null;
+};
 
 async function fetchPageData(productId: string, token: string) {
   const headers = {
@@ -65,7 +64,7 @@ async function fetchPageData(productId: string, token: string) {
       fetch(`${API}/products/${productId}`, {
         headers,
         cache: "no-store",
-      }).then(json<ProductResponse>),
+      }).then(json<ProductResponse | Product>),
 
       fetch(`${API}/printing-jobs/designs/${productId}`, {
         headers,
@@ -79,41 +78,43 @@ async function fetchPageData(productId: string, token: string) {
         json<{
           barcodesByDesign?: BarcodesByDesign;
           barcodes?: BarcodeRow[];
-        }>
+        }>,
       ),
     ]);
 
-  let product: Product | null = null;
+  const productData =
+    productResult.status === "fulfilled" ? productResult.value : null;
 
-  if (productResult.status === "fulfilled") {
-    const data = productResult.value;
-
-    if (isWrappedProduct(data)) {
-      product = data.product ?? null;
-    } else {
-      product = data;
-    }
-  }
-
-  const designs =
-    designsResult.status === "fulfilled"
-      ? (designsResult.value.designs ?? [])
-      : [];
+  const designsData =
+    designsResult.status === "fulfilled" ? designsResult.value : {};
 
   const barcodeData =
-    barcodesResult.status === "fulfilled"
-      ? barcodesResult.value
-      : {};
+    barcodesResult.status === "fulfilled" ? barcodesResult.value : {};
 
-  const byDesign: BarcodesByDesign =
-    barcodeData.barcodesByDesign ?? {};
+  const product = unwrapProduct(productData);
 
-  for (const barcode of barcodeData.barcodes ?? []) {
-    (byDesign[barcode.designCode] ??= []).push(barcode);
+  const designs = Array.isArray(designsData.designs)
+    ? designsData.designs
+    : [];
+
+  // The backend provides both `barcodesByDesign` and a flat `barcodes` list.
+  // Do not merge them: they contain the same records and merging doubles
+  // the counts shown on collapsed design cards.
+  const byDesign: BarcodesByDesign = {
+    ...(barcodeData.barcodesByDesign ?? {}),
+  };
+
+  // Compatibility with an older response that only returns the flat list.
+  if (Object.keys(byDesign).length === 0) {
+    for (const barcode of barcodeData.barcodes ?? []) {
+      if (!byDesign[barcode.designCode]) {
+        byDesign[barcode.designCode] = [];
+      }
+      byDesign[barcode.designCode].push(barcode);
+    }
   }
-
   return {
-    product,
+    product: product ?? null,
     designs,
     byDesign,
   };
@@ -136,44 +137,37 @@ export default async function ManageBarcodesPage({
     );
   }
 
-  const { product, designs, byDesign } =
-    await fetchPageData(productId, token);
+  const { product, designs, byDesign } = await fetchPageData(productId, token);
 
-  const productName =
-    product?.name ?? `Product ${productId}`;
+  const productName = product?.name ?? `Product ${productId}`;
 
-  const barcodeGroups: BarcodeDesignGroup[] = designs.map(
-    (design) => ({
-      _id: design._id,
-      productName,
-      designName: design.name || design.designCode,
-      mode: design.mode || "-",
-      designCode: design.designCode,
-      designUrl: design.designUrl,
-      rows: byDesign[design.designCode] ?? [],
-    })
-  );
+  const barcodeGroups: BarcodeDesignGroup[] = designs.map((design) => ({
+    _id: design._id,
+    productName,
+    designName: design.name || design.designCode,
+    mode: design.mode || "-",
+    designCode: design.designCode,
+    designUrl: design.designUrl,
+    rows: Array.isArray(byDesign[design.designCode])
+      ? byDesign[design.designCode]
+      : [],
+  }));
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-lg font-semibold">
-          Manage Barcodes
-        </h1>
-
-        <p className="text-xs text-slate-500">
-          Product: {productName}
-        </p>
+      <div className="flex flex-wrap items-start gap-3">
+        <BackButton />
+        <div>
+          <h1 className="text-lg font-semibold">Manage Barcodes</h1>
+          <p className="text-xs text-slate-500">
+            Product: {productName}
+          </p>
+        </div>
       </div>
 
-      <BarcodeCreateForm
-        productId={productId}
-        designs={designs}
-      />
+      <BarcodeCreateForm productId={productId} designs={designs} />
 
-      <BarcodeManager
-        designs={barcodeGroups}
-      />
+      <BarcodeManager designs={barcodeGroups} />
     </div>
   );
 }

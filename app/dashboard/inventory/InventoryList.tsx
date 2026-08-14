@@ -1,26 +1,10 @@
 "use client";
 
-import { useState, useMemo } from "react";
 import Link from "next/link";
+import { FormEvent, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
-// ---------- Types ----------
-type InventoryRow = {
-  _id: string;
-  productId: string;
-  type: "RAW" | "PRINTED";
-  designCode: string | null;
-  // Optional so rows that do not yet store an image can still be displayed.
-  designUrl?: string | null;
-  quantity: number;
-  minThreshold: number;
-  isActive: boolean;
-  barcodes?: string[];
-  totalBarcodes?: number;
-  availableBarcodes?: number;
-  usedBarcodes?: number;
-};
-
-type Product = {
+export type InventoryProduct = {
   id: string;
   name: string;
   categoryName: string;
@@ -29,541 +13,270 @@ type Product = {
   minThreshold: number;
 };
 
-type SupplierInfo = {
-  supplierName: string;
-  notes: string;
-  purchaseOrderId: string;
-  status: "CREATED" | "PARTIAL" | "VERIFIED";
-};
-
-type LowStockItem = {
-  _id: string;
-  productId: string;
-  productName: string;
-  designCode: string;
-  designName: string;
-  mode: string;
-  quantity: number;
-  minThreshold: number;
-  deficit: number;
-};
-
 type Props = {
-  products: Product[];
-  inventoriesByProduct: Record<string, InventoryRow[]>;
-  supplierByProduct: Record<string, SupplierInfo>;
-  lowStockItems?: LowStockItem[];
+  products: InventoryProduct[];
 };
 
-// ---------- Helper: badge for inventory type ----------
-function TypeBadge({ type }: { type: "RAW" | "PRINTED" }) {
-  return (
-    <span
-      className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${
-        type === "RAW"
-          ? "bg-amber-100 text-amber-800"
-          : "bg-emerald-100 text-emerald-800"
-      }`}
-    >
-      {type}
-    </span>
-  );
-}
+type Notice = {
+  productId: string;
+  kind: "error" | "success";
+  message: string;
+};
 
-// ---------- Main component ----------
-export default function InventoryList({
-  products,
-  inventoriesByProduct,
-  supplierByProduct,
-  lowStockItems = [],
-}: Props) {
-  // ----- Filter states -----
+const isLowStock = (product: InventoryProduct) =>
+  product.minThreshold > 0 && product.rawQuantity <= product.minThreshold;
+
+export default function InventoryList({ products }: Props) {
+  const router = useRouter();
   const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("");
-  const [typeFilter, setTypeFilter] = useState<"ALL" | "RAW" | "PRINTED">("ALL");
   const [showLowStockOnly, setShowLowStockOnly] = useState(false);
+  const [quantities, setQuantities] = useState<Record<string, string>>({});
+  const [addingProductId, setAddingProductId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
 
-  // ----- Threshold editing states -----
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState<string>("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [successId, setSuccessId] = useState<string | null>(null);
-
-  // ----- Modal state -----
-  const [modalImage, setModalImage] = useState<string | null>(null);
-
-  // ----- Derived: distinct categories -----
-  const categories = useMemo(() => {
-    const set = new Set(products.map((p) => p.categoryName).filter(Boolean));
-    return Array.from(set).sort();
-  }, [products]);
-
-  // ----- Filtered & sorted products -----
   const filteredProducts = useMemo(() => {
-    let result = products;
+    const query = search.trim().toLowerCase();
 
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      result = result.filter((product) => {
-        const rows = inventoriesByProduct[product.id] || [];
-        const matchesName = product.name.toLowerCase().includes(q);
-        const matchesDesign = rows.some((row) =>
-          row.designCode?.toLowerCase().includes(q)
-        );
-        return matchesName || matchesDesign;
+    return [...products]
+      .filter((product) => {
+        const matchesSearch =
+          !query ||
+          product.name.toLowerCase().includes(query) ||
+          product.categoryName.toLowerCase().includes(query);
+
+        return matchesSearch && (!showLowStockOnly || isLowStock(product));
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [products, search, showLowStockOnly]);
+
+  const addRawStock = async (
+    event: FormEvent<HTMLFormElement>,
+    product: InventoryProduct,
+  ) => {
+    event.preventDefault();
+
+    const quantity = Number(quantities[product.id]);
+    if (!Number.isSafeInteger(quantity) || quantity < 1) {
+      setNotice({
+        productId: product.id,
+        kind: "error",
+        message: "Enter a positive whole-number quantity.",
       });
-    }
-
-    if (categoryFilter) {
-      result = result.filter((p) => p.categoryName === categoryFilter);
-    }
-
-    if (typeFilter !== "ALL" || showLowStockOnly) {
-      result = result.filter((product) => {
-        const rows = inventoriesByProduct[product.id] || [];
-
-        if (typeFilter !== "ALL") {
-          const hasType = rows.some((row) => row.type === typeFilter);
-          if (!hasType) return false;
-        }
-
-        if (showLowStockOnly) {
-          const belowThreshold = rows.some(
-            (row) => row.quantity <= row.minThreshold && row.minThreshold > 0
-          );
-          if (!belowThreshold) return false;
-        }
-
-        return true;
-      });
-    }
-
-    return result.sort((a, b) => a.name.localeCompare(b.name));
-  }, [
-    products,
-    search,
-    categoryFilter,
-    typeFilter,
-    showLowStockOnly,
-    inventoriesByProduct,
-  ]);
-
-  // ----- Threshold editing handlers -----
-  const startEdit = (row: InventoryRow) => {
-    setEditingId(row._id);
-    setEditValue(String(row.minThreshold ?? 0));
-    setError(null);
-    setSuccessId(null);
-  };
-
-  const cancelEdit = () => {
-    setEditingId(null);
-    setEditValue("");
-    setError(null);
-  };
-
-  const saveThreshold = async (rowId: string) => {
-    const parsed = Number(editValue);
-    if (isNaN(parsed) || parsed < 0) {
-      setError("Must be a non-negative number");
       return;
     }
 
-    setSaving(true);
-    setError(null);
-
     try {
-      const res = await fetch(`/api/inventory/threshold/${rowId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ minThreshold: parsed }),
-      });
+      setAddingProductId(product.id);
+      setNotice(null);
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.message || "Failed to update threshold");
+      const response = await fetch("/api/inventory/raw", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId: product.id, quantity }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.message || "Could not add RAW stock.");
       }
 
-      setSuccessId(rowId);
-      setEditingId(null);
-    } catch (err: any) {
-      setError(err.message || "Something went wrong");
+      setQuantities((current) => ({ ...current, [product.id]: "" }));
+      setNotice({
+        productId: product.id,
+        kind: "success",
+        message: `${quantity} RAW units added to ${product.name}.`,
+      });
+      router.refresh();
+    } catch (error) {
+      setNotice({
+        productId: product.id,
+        kind: "error",
+        message: error instanceof Error ? error.message : "Could not add RAW stock.",
+      });
     } finally {
-      setSaving(false);
-      if (successId) setTimeout(() => setSuccessId(null), 2000);
+      setAddingProductId(null);
     }
   };
 
-  const handleKeyDown = (
-    e: React.KeyboardEvent<HTMLInputElement>,
-    rowId: string
-  ) => {
-    if (e.key === "Enter") saveThreshold(rowId);
-    if (e.key === "Escape") cancelEdit();
-  };
-
-  // ----- Render -----
   return (
-    <div className="space-y-4">
-      {/* ---------- FILTER BAR ---------- */}
-      <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">
-        {/* Search */}
-        <div className="min-w-[180px] flex-1">
-          <label className="mb-1 block text-[11px] font-medium text-slate-500">
-            Search
-          </label>
-          <input
-            type="text"
-            placeholder="Product name or design code…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-        </div>
+    <div className="space-y-5">
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.16em] text-indigo-600">
+              Inventory by model
+            </p>
+            <h1 className="mt-1 text-xl font-semibold text-slate-900">
+              Phone models
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">
+              Add RAW stock here. Open a model only when you need its designs,
+              labels, or stock details.
+            </p>
+          </div>
 
-        {/* Category */}
-        <div>
-          <label className="mb-1 block text-[11px] font-medium text-slate-500">
-            Category
-          </label>
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          >
-            <option value="">All categories</option>
-            {categories.map((cat) => (
-              <option key={cat} value={cat}>
-                {cat}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Type */}
-        <div>
-          <label className="mb-1 block text-[11px] font-medium text-slate-500">
-            Inventory type
-          </label>
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value as any)}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          >
-            <option value="ALL">All types</option>
-            <option value="RAW">RAW only</option>
-            <option value="PRINTED">PRINTED only</option>
-          </select>
-        </div>
-
-        {/* Low stock toggle + dedicated page button */}
-        <div className="flex items-center gap-2 self-end pb-2">
-          <input
-            id="low-stock"
-            type="checkbox"
-            checked={showLowStockOnly}
-            onChange={(e) => setShowLowStockOnly(e.target.checked)}
-            className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-          />
-          <label
-            htmlFor="low-stock"
-            className="text-xs text-slate-600 cursor-pointer"
-          >
-            Below threshold only
-          </label>
-
-          <Link
-            href="/dashboard/inventory/low-stock"
-            className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700 hover:bg-red-100"
-          >
-            ⚠️ Low Stock
-          </Link>
-        </div>
-
-        {/* Clear filters */}
-        <button
-          onClick={() => {
-            setSearch("");
-            setCategoryFilter("");
-            setTypeFilter("ALL");
-            setShowLowStockOnly(false);
-          }}
-          className="self-end rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-500 hover:bg-slate-50"
-        >
-          Clear filters
-        </button>
-      </div>
-
-      {/* ---------- PRODUCT LIST ---------- */}
-      {filteredProducts.length === 0 ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 text-center">
-          <p className="text-sm text-slate-500">
-            No products match your filters.
-          </p>
-          <button
-            onClick={() => {
-              setSearch("");
-              setCategoryFilter("");
-              setTypeFilter("ALL");
-              setShowLowStockOnly(false);
-            }}
-            className="mt-2 text-xs text-blue-600 hover:underline"
-          >
-            Clear all filters
-          </button>
-        </div>
-      ) : (
-        filteredProducts.map((product) => {
-          const rows = inventoriesByProduct[product.id] || [];
-
-          const rawQuantity = rows
-            .filter((row) => row.type === "RAW")
-            .reduce((sum, row) => sum + Number(row.quantity || 0), 0);
-
-          const printedQuantity = rows
-            .filter((row) => row.type === "PRINTED")
-            .reduce((sum, row) => sum + Number(row.quantity || 0), 0);
-
-          const barcodeByDesign = new Map<
-            string,
-            { total: number; available: number; used: number }
-          >();
-
-          rows.forEach((row) => {
-            if (!row.designCode || barcodeByDesign.has(row.designCode)) return;
-            barcodeByDesign.set(row.designCode, {
-              total: Number(row.totalBarcodes || 0),
-              available: Number(row.availableBarcodes || 0),
-              used: Number(row.usedBarcodes || 0),
-            });
-          });
-
-          const totalBarcodes = Array.from(barcodeByDesign.values()).reduce(
-            (sum, item) => sum + item.total,
-            0
-          );
-          const remainingToLabel = Array.from(barcodeByDesign.values()).reduce(
-            (sum, item) => sum + item.available,
-            0
-          );
-          const usedBarcodes = Array.from(barcodeByDesign.values()).reduce(
-            (sum, item) => sum + item.used,
-            0
-          );
-
-          const supplier = supplierByProduct[product.id];
-
-          return (
-            <section
-              key={product.id}
-              className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md"
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="/dashboard/inventory/low-stock"
+              className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 hover:bg-rose-100"
             >
-              {/* Header */}
-              <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-sm font-semibold text-slate-800">
+              Low-stock report
+            </Link>
+            <Link
+              href="/dashboard/purchase-orders"
+              className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Purchase orders
+            </Link>
+          </div>
+        </div>
+
+        <div className="mt-5 flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center">
+          <label className="relative block flex-1">
+            <span className="sr-only">Search models</span>
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search model, for example iPhone 11"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+            />
+          </label>
+
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              checked={showLowStockOnly}
+              onChange={(event) => setShowLowStockOnly(event.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            Needs attention
+          </label>
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="hidden grid-cols-[minmax(190px,1.3fr)_120px_120px_minmax(250px,1fr)_128px] gap-4 border-b border-slate-200 bg-slate-50 px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500 lg:grid">
+          <span>Model</span>
+          <span className="text-center">RAW stock</span>
+          <span className="text-center">Printed</span>
+          <span>Add RAW stock</span>
+          <span className="text-right">Open</span>
+        </div>
+
+        {filteredProducts.length === 0 ? (
+          <div className="px-5 py-14 text-center">
+            <p className="text-sm font-medium text-slate-700">No models found.</p>
+            <p className="mt-1 text-xs text-slate-500">
+              Try a different search or clear the attention filter.
+            </p>
+          </div>
+        ) : (
+          filteredProducts.map((product) => {
+            const lowStock = isLowStock(product);
+            const isAdding = addingProductId === product.id;
+            const modelNotice = notice?.productId === product.id ? notice : null;
+
+            return (
+              <article
+                key={product.id}
+                className="grid gap-4 border-b border-slate-100 px-4 py-4 last:border-b-0 lg:grid-cols-[minmax(190px,1.3fr)_120px_120px_minmax(250px,1fr)_128px] lg:items-center lg:px-5"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="truncate text-base font-semibold text-slate-900">
                       {product.name}
                     </h2>
-                    {product.categoryName && (
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">
-                        {product.categoryName}
+                    {lowStock && (
+                      <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">
+                        Low RAW stock
                       </span>
                     )}
                   </div>
+                  {product.categoryName && product.categoryName !== "-" && (
+                    <p className="mt-1 text-xs text-slate-500">{product.categoryName}</p>
+                  )}
+                </div>
 
-                  <p className="mt-1 text-xs text-slate-400">
-                    ID: {product.id}
+                <div className="lg:text-center">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400 lg:hidden">
+                    RAW stock
                   </p>
-
-                  {supplier && (
-                    <p className="mt-1 text-xs text-slate-500">
-                      Supplier: {supplier.supplierName || "-"}
-                      {supplier.status && (
-                        <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-[10px]">
-                          {supplier.status}
-                        </span>
-                      )}
+                  <p className="mt-1 text-sm font-semibold text-slate-800 lg:mt-0">
+                    {product.rawQuantity}
+                  </p>
+                  {product.minThreshold > 0 && (
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      Min. {product.minThreshold}
                     </p>
                   )}
                 </div>
 
-                <Link
-                  href={`/dashboard/barcodes/${product.id}`}
-                  className="shrink-0 text-xs font-medium text-blue-700 hover:underline"
+                <div className="lg:text-center">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400 lg:hidden">
+                    Printed stock
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-slate-800 lg:mt-0">
+                    {product.printedQuantity}
+                  </p>
+                </div>
+
+                <form
+                  onSubmit={(event) => addRawStock(event, product)}
+                  className="flex flex-wrap items-start gap-2"
                 >
-                  Manage barcodes →
-                </Link>
-              </div>
+                  <label className="min-w-[132px] flex-1">
+                    <span className="sr-only">RAW quantity for {product.name}</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      inputMode="numeric"
+                      value={quantities[product.id] ?? ""}
+                      onChange={(event) =>
+                        setQuantities((current) => ({
+                          ...current,
+                          [product.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="Quantity"
+                      disabled={isAdding}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-50"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={isAdding}
+                    className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-300"
+                  >
+                    {isAdding ? "Adding..." : "Add RAW"}
+                  </button>
+                  {modelNotice && (
+                    <p
+                      className={`basis-full text-xs ${
+                        modelNotice.kind === "success"
+                          ? "text-emerald-700"
+                          : "text-rose-700"
+                      }`}
+                    >
+                      {modelNotice.message}
+                    </p>
+                  )}
+                </form>
 
-              {/* Summary cards */}
-              <div className="mt-4 grid grid-cols-2 gap-3 text-sm md:grid-cols-5">
-                <div className="rounded-lg bg-slate-50 p-3">
-                  <p className="text-[11px] text-slate-500">RAW</p>
-                  <p className="mt-1 font-semibold">{rawQuantity}</p>
+                <div className="lg:text-right">
+                  <Link
+                    href={`/dashboard/inventory/${product.id}`}
+                    className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
+                  >
+                    View details
+                  </Link>
                 </div>
-
-                <div className="rounded-lg bg-slate-50 p-3">
-                  <p className="text-[11px] text-slate-500">PRINTED</p>
-                  <p className="mt-1 font-semibold">{printedQuantity}</p>
-                </div>
-
-                <div className="rounded-lg bg-blue-50 p-3">
-                  <p className="text-[11px] text-blue-700">
-                    Remaining to label
-                  </p>
-                  <p className="mt-1 font-semibold text-blue-800">
-                    {remainingToLabel}
-                  </p>
-                </div>
-
-                <div className="rounded-lg bg-slate-50 p-3">
-                  <p className="text-[11px] text-slate-500">Total barcodes</p>
-                  <p className="mt-1 font-semibold">{totalBarcodes}</p>
-                </div>
-
-                <div className="rounded-lg bg-slate-50 p-3">
-                  <p className="text-[11px] text-slate-500">Used barcodes</p>
-                  <p className="mt-1 font-semibold">{usedBarcodes}</p>
-                </div>
-              </div>
-
-              {/* Table */}
-              {rows.length === 0 ? (
-                <p className="mt-4 text-xs text-slate-400">
-                  No inventory records yet for this product.
-                </p>
-              ) : (
-                <div className="mt-4 overflow-x-auto">
-                  <table className="min-w-full text-left text-xs">
-                    <thead className="bg-slate-50 text-slate-600">
-                      {/* No whitespace between <tr> and <th> – inline all to avoid hydration error */}
-                      <tr><th className="p-2">Image</th><th className="p-2">Type</th><th className="p-2">Design</th><th className="p-2">Qty</th><th className="p-2">Available</th><th className="p-2">Used</th><th className="p-2">Min threshold</th></tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((row) => {
-                        const isLow =
-                          row.minThreshold > 0 &&
-                          row.quantity <= row.minThreshold;
-
-                        return (
-                          // Inline <tr> and <td> elements to avoid whitespace nodes
-                          <tr
-                            key={row._id}
-                            className={`border-b border-slate-100 ${isLow ? "bg-red-50" : ""}`}
-                          >
-                            <td className="p-2">
-                              {row.designUrl ? (
-                                <img
-                                  src={row.designUrl}
-                                  alt={row.designCode || "Design"}
-                                  className="h-8 w-8 rounded object-cover border border-slate-200 cursor-pointer hover:opacity-80"
-                                  onClick={() => setModalImage(row.designUrl ?? null)}
-                                  onError={(e) => {
-                                    (e.target as HTMLImageElement).style.display = "none";
-                                  }}
-                                />
-                              ) : (
-                                <span className="text-slate-300">—</span>
-                              )}
-                            </td>
-                            <td className="p-2"><TypeBadge type={row.type} /></td>
-                            <td className="p-2 font-mono text-[11px]">{row.designCode || "-"}</td>
-                            <td className="p-2">{row.quantity}</td>
-                            <td className="p-2">{row.availableBarcodes ?? 0}</td>
-                            <td className="p-2">{row.usedBarcodes ?? 0}</td>
-                            <td className="p-2">
-                              {editingId === row._id ? (
-                                <div className="flex items-center gap-1">
-                                  <input
-                                    type="number"
-                                    value={editValue}
-                                    onChange={(e) => setEditValue(e.target.value)}
-                                    onKeyDown={(e) => handleKeyDown(e, row._id)}
-                                    onBlur={() => saveThreshold(row._id)}
-                                    className="w-16 rounded border border-slate-300 px-1 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                    min="0"
-                                    step="1"
-                                    autoFocus
-                                    disabled={saving}
-                                  />
-                                  <button
-                                    onClick={cancelEdit}
-                                    className="text-slate-400 hover:text-slate-600"
-                                    title="Cancel"
-                                  >
-                                    ✕
-                                  </button>
-                                </div>
-                              ) : (
-                                <button
-                                  onClick={() => startEdit(row)}
-                                  className={`group flex items-center gap-1 rounded px-1 -mx-1 hover:bg-slate-100 ${
-                                    isLow ? "text-red-700 font-semibold" : ""
-                                  }`}
-                                  title="Click to edit threshold"
-                                >
-                                  <span>{row.minThreshold}</span>
-                                  <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    className="h-3 w-3 text-slate-300 group-hover:text-slate-600"
-                                    fill="none"
-                                    viewBox="0 0 24 24"
-                                    stroke="currentColor"
-                                  >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      strokeWidth={2}
-                                      d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                                    />
-                                  </svg>
-                                </button>
-                              )}
-                              {successId === row._id && (
-                                <span className="ml-1 text-green-600 text-xs">✓</span>
-                              )}
-                              {error && editingId === row._id && (
-                                <span className="ml-1 text-red-600 text-xs">{error}</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
-          );
-        })
-      )}
-
-      {/* ---------- IMAGE MODAL ---------- */}
-      {modalImage && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
-          onClick={() => setModalImage(null)}
-        >
-          <div
-            className="relative max-h-[90vh] max-w-[90vw] rounded-lg bg-white p-2 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              className="absolute -top-3 -right-3 flex h-8 w-8 items-center justify-center rounded-full bg-white text-slate-600 shadow hover:bg-slate-100"
-              onClick={() => setModalImage(null)}
-            >
-              ✕
-            </button>
-            <img
-              src={modalImage}
-              alt="Design preview"
-              className="max-h-[85vh] max-w-full rounded object-contain"
-            />
-          </div>
-        </div>
-      )}
+              </article>
+            );
+          })
+        )}
+      </section>
     </div>
   );
 }

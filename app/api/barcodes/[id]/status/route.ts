@@ -1,9 +1,8 @@
 // app/api/barcodes/[id]/status/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
-const BACKEND_URL = "https://inventory-system-ecew.onrender.com";
+const BACKEND_URL = " https://inventory-system-24ly.onrender.com";
 
 export async function PATCH(
   req: NextRequest,
@@ -11,15 +10,11 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-
     const cookieStore = await cookies();
     const token = cookieStore.get("token")?.value;
 
     if (!token) {
-      return NextResponse.json(
-        { message: "Unauthorized" },
-        { status: 401 }
-      );
+      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
 
     const body = await req.json();
@@ -37,16 +32,9 @@ export async function PATCH(
     );
 
     const data = await res.json().catch(() => ({}));
-
-    return NextResponse.json(data, {
-      status: res.status,
-    });
+    return NextResponse.json(data, { status: res.status });
   } catch (err) {
-    console.error("PATCH /api/barcodes/[id]/status proxy error:", err);
-
-    return NextResponse.json(
-      { message: "Server error" },
-      { status: 500 }
-    );
+    console.error("PATCH /api/barcodes/[id]/status proxy error", err);
+    return NextResponse.json({ message: "Server error" }, { status: 500 });
   }
 }

@@ -1,43 +1,45 @@
-// app/dashboard/purchase-orders/page.tsx
 import { cookies } from "next/headers";
-import PurchaseOrderPage from "./PurchaseOrderPage";
+import PurchaseOrderPage, {
+  type ListPurchaseOrder,
+  type ProductForPurchaseOrder,
+} from "./PurchaseOrderPage";
 
-type ProductForPo = {
-  id: string;
-  name: string;
-  categoryName: string;
-  rawQuantity: number;
-};
+const API = `${process.env.BACKEND_URL || "https://inventory-system-24ly.onrender.com"}/api`;
 
 export default async function PurchaseOrdersPage() {
-  const cookieStore = await cookies();
-  const token = cookieStore.get("token")?.value;
-
-  let products: ProductForPo[] = [];
+  const token = (await cookies()).get("token")?.value;
+  let products: ProductForPurchaseOrder[] = [];
+  let purchaseOrders: ListPurchaseOrder[] = [];
 
   if (token) {
-    const res = await fetch(
-      "https://inventory-system-ecew.onrender.com/api/dashboard/inventory-products",
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      }
-    );
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+      const [productsResponse, ordersResponse] = await Promise.all([
+        fetch(`${API}/dashboard/inventory-products`, {
+          headers,
+          cache: "no-store",
+        }),
+        fetch(`${API}/purchase-orders`, {
+          headers,
+          cache: "no-store",
+        }),
+      ]);
 
-    if (res.ok) {
-      products = await res.json();
+      const productsData = productsResponse.ok
+        ? await productsResponse.json().catch(() => [])
+        : [];
+      const ordersData = ordersResponse.ok
+        ? await ordersResponse.json().catch(() => ({}))
+        : {};
+
+      products = Array.isArray(productsData) ? productsData : [];
+      purchaseOrders = Array.isArray(ordersData.purchaseOrders)
+        ? ordersData.purchaseOrders
+        : [];
+    } catch (error) {
+      console.error("Load purchase orders page error:", error);
     }
   }
 
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-lg font-semibold">Purchase Orders</h1>
-        <p className="text-xs text-slate-500">
-          Create and verify purchase orders in one place.
-        </p>
-      </div>
-      <PurchaseOrderPage products={products} />
-    </div>
-  );
+  return <PurchaseOrderPage products={products} initialPurchaseOrders={purchaseOrders} />;
 }

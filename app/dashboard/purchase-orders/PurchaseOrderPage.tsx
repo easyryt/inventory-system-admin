@@ -1,926 +1,563 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-// ----- Types -----
-type Product = {
+export type ProductForPurchaseOrder = {
   id: string;
   name: string;
   categoryName: string;
   rawQuantity: number;
 };
 
-type Design = {
-  _id: string;
-  name: string;
-  mode?: string;
-  designCode: string;
-  designUrl?: string;
-  notes?: string;
+type ProductReference = string | { _id: string; name?: string };
+
+type PurchaseOrderItem = {
+  productId: ProductReference;
+  orderedQty: number;
+  receivedQty?: number;
 };
 
-type PurchaseOrderStatus = "PENDING" | "VERIFIED";
-
-type PoItem = {
-  productId: string;
-  productName: string;
-  designId: string;
-  designCode: string;
-  designName: string;
-  orderedQty: string;
-};
-
-type ListPOItem = {
+export type ListPurchaseOrder = {
   _id: string;
   supplierName: string;
   notes?: string;
-  items: {
-    productId: string | { _id: string; name: string };
-    designId: string;
-    designCode: string;
-    orderedQty: number;
-    receivedQty?: number;
-    productName?: string;
-    designName?: string;
-  }[];
-  status: PurchaseOrderStatus;
+  items: PurchaseOrderItem[];
+  status: "PENDING" | "VERIFIED";
   textSummary?: string;
   createdAt?: string;
   purchaseDate?: string;
 };
 
-type VerifyItem = {
+type DraftItem = {
   productId: string;
-  designId: string;
-  designCode: string;
   productName: string;
-  designName: string;
   orderedQty: number;
+};
+
+type VerifyItem = DraftItem & {
   receivedQty: string;
 };
 
-type ToastState = { type: "success" | "error"; message: string } | null;
-
-const todayDate = () => new Date().toISOString().slice(0, 10);
+type ToastKind = "success" | "error";
+type Toast = { kind: ToastKind; message: string } | null;
 
 type Props = {
-  products: Product[];
+  products: ProductForPurchaseOrder[];
+  initialPurchaseOrders: ListPurchaseOrder[];
 };
 
-// Helper to safely get product ID as string
-const getProductId = (productId: string | { _id: string; name?: string }): string => {
-  if (typeof productId === 'object' && productId !== null) {
-    return productId._id || String(productId);
-  }
-  return String(productId);
+const today = () => new Date().toISOString().slice(0, 10);
+
+const getProductId = (value: ProductReference) =>
+  typeof value === "string" ? value : value._id;
+
+const getProductName = (
+  value: ProductReference,
+  products: ProductForPurchaseOrder[],
+) => {
+  if (typeof value !== "string") return value.name || "Unknown product";
+  return products.find((product) => product.id === value)?.name || "Unknown product";
 };
 
-// Helper to safely get product name
-const getProductName = (productId: string | { _id: string; name?: string }): string => {
-  if (typeof productId === 'object' && productId !== null) {
-    return productId.name || 'Unknown product';
-  }
-  return 'Unknown product';
+const formatOrderDate = (value?: string) => {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
 };
 
-// Helper to format date as DD-MM-YYYY
-const formatDateForWhatsApp = (date: Date) => {
-  const d = date.getDate().toString().padStart(2, '0');
-  const m = (date.getMonth() + 1).toString().padStart(2, '0');
-  const y = date.getFullYear();
-  return `${d}-${m}-${y}`;
-};
+const formatWhatsAppDate = (date = new Date()) =>
+  `${String(date.getDate()).padStart(2, "0")}-${String(
+    date.getMonth() + 1,
+  ).padStart(2, "0")}-${date.getFullYear()}`;
 
-export default function PurchaseOrderPage({ products }: Props) {
-  // ---------- Create PO state ----------
+export default function PurchaseOrderPage({
+  products,
+  initialPurchaseOrders,
+}: Props) {
   const [supplierName, setSupplierName] = useState("");
   const [notes, setNotes] = useState("");
-  const [purchaseDate, setPurchaseDate] = useState(todayDate());
-  const [items, setItems] = useState<PoItem[]>([]);
+  const [purchaseDate, setPurchaseDate] = useState(today());
   const [selectedProductId, setSelectedProductId] = useState("");
-  const [selectedDesignId, setSelectedDesignId] = useState("");
-  const [selectedQty, setSelectedQty] = useState("");
-  const [designs, setDesigns] = useState<Design[]>([]);
-  const [loadingDesigns, setLoadingDesigns] = useState(false);
-  const [createError, setCreateError] = useState("");
+  const [selectedQuantity, setSelectedQuantity] = useState("");
+  const [draftItems, setDraftItems] = useState<DraftItem[]>([]);
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
 
-  // ---------- List state ----------
-  const [purchaseOrders, setPurchaseOrders] = useState<ListPOItem[]>([]);
-  const [listLoading, setListLoading] = useState(false);
-  const [listError, setListError] = useState("");
-
-  // ---------- Selection state ----------
+  const [purchaseOrders, setPurchaseOrders] = useState(initialPurchaseOrders);
+  const [loadingOrders, setLoadingOrders] = useState(false);
+  const [ordersError, setOrdersError] = useState("");
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
 
-  // ---------- Verify modal state ----------
-  const [selectedVerifyOrder, setSelectedVerifyOrder] = useState<ListPOItem | null>(null);
+  const [verifyOrder, setVerifyOrder] = useState<ListPurchaseOrder | null>(null);
   const [verifyItems, setVerifyItems] = useState<VerifyItem[]>([]);
   const [verifyError, setVerifyError] = useState("");
   const [verifying, setVerifying] = useState(false);
-
-  // ---------- Toast ----------
-  const [toast, setToast] = useState<ToastState>(null);
-  const [copiedSummary, setCopiedSummary] = useState(false);
+  const [toast, setToast] = useState<Toast>(null);
 
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 3000);
-    return () => clearTimeout(t);
+    const timeout = window.setTimeout(() => setToast(null), 3500);
+    return () => window.clearTimeout(timeout);
   }, [toast]);
 
-  useEffect(() => {
-    if (!copiedSummary) return;
-    const t = setTimeout(() => setCopiedSummary(false), 2000);
-    return () => clearTimeout(t);
-  }, [copiedSummary]);
+  const showToast = (kind: ToastKind, message: string) =>
+    setToast({ kind, message });
 
-  const showSuccess = (msg: string) => setToast({ type: "success", message: msg });
-  const showError = (msg: string) => setToast({ type: "error", message: msg });
-
-  // ---------- Fetch designs ----------
-  useEffect(() => {
-    if (!selectedProductId) {
-      setDesigns([]);
-      setSelectedDesignId("");
-      return;
-    }
-
-    const fetchDesigns = async () => {
-      setLoadingDesigns(true);
-      try {
-        const res = await fetch(`/api/product-designs/product/${selectedProductId}`, {
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok) {
-          setDesigns(data.designs || []);
-          if (data.designs?.length > 0) {
-            setSelectedDesignId(data.designs[0]._id);
-          }
-        } else {
-          setDesigns([]);
-        }
-      } catch {
-        setDesigns([]);
-      } finally {
-        setLoadingDesigns(false);
-      }
-    };
-
-    fetchDesigns();
-  }, [selectedProductId]);
-
-  // ---------- Fetch orders ----------
-  const fetchPurchaseOrders = async () => {
+  const loadPurchaseOrders = async () => {
     try {
-      setListLoading(true);
-      setListError("");
-      const res = await fetch("/api/purchase-orders", {
-        credentials: "include",
+      setLoadingOrders(true);
+      setOrdersError("");
+
+      const response = await fetch("/api/purchase-orders", {
         method: "GET",
-        headers: { "Content-Type": "application/json" },
         cache: "no-store",
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const msg = data?.message || "Failed to load orders";
-        setListError(msg);
-        showError(msg);
-        return;
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.message || "Could not load purchase orders.");
       }
-      setPurchaseOrders(data.purchaseOrders || []);
-      // Clear selection after refresh
+
+      setPurchaseOrders(Array.isArray(data.purchaseOrders) ? data.purchaseOrders : []);
       setSelectedOrderIds(new Set());
-    } catch {
-      const msg = "Something went wrong loading orders";
-      setListError(msg);
-      showError(msg);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not load purchase orders.";
+      setOrdersError(message);
+      showToast("error", message);
     } finally {
-      setListLoading(false);
+      setLoadingOrders(false);
     }
   };
 
-  useEffect(() => {
-    fetchPurchaseOrders();
-  }, []);
-
-  // ---------- Add/remove lines ----------
-  const addLine = () => {
+  const addProductLine = () => {
     setCreateError("");
-    if (!selectedProductId) {
-      setCreateError("Select a product");
-      showError("Select a product");
-      return;
-    }
-    if (!selectedDesignId) {
-      setCreateError("Select a design/model");
-      showError("Select a design");
-      return;
-    }
-    const qtyNum = Number(selectedQty);
-    if (isNaN(qtyNum) || qtyNum <= 0) {
-      setCreateError("Quantity must be > 0");
-      showError("Quantity must be > 0");
-      return;
-    }
+    const quantity = Number(selectedQuantity);
+    const product = products.find((item) => item.id === selectedProductId);
 
-    const product = products.find((p) => p.id === selectedProductId);
     if (!product) {
-      setCreateError("Product not found");
-      showError("Product not found");
+      setCreateError("Select a product first.");
       return;
     }
-    const design = designs.find((d) => d._id === selectedDesignId);
-    if (!design) {
-      setCreateError("Design not found");
-      showError("Design not found");
+    if (!Number.isSafeInteger(quantity) || quantity < 1) {
+      setCreateError("Quantity must be a positive whole number.");
       return;
     }
 
-    const exists = items.find(
-      (i) => i.productId === selectedProductId && i.designId === selectedDesignId
-    );
-    if (exists) {
-      setItems((prev) =>
-        prev.map((i) =>
-          i.productId === selectedProductId && i.designId === selectedDesignId
-            ? { ...i, orderedQty: String(Number(i.orderedQty) + qtyNum) }
-            : i
-        )
+    setDraftItems((current) => {
+      const existing = current.find((item) => item.productId === product.id);
+      if (!existing) {
+        return [...current, { productId: product.id, productName: product.name, orderedQty: quantity }];
+      }
+
+      return current.map((item) =>
+        item.productId === product.id
+          ? { ...item, orderedQty: item.orderedQty + quantity }
+          : item,
       );
-    } else {
-      setItems((prev) => [
-        ...prev,
-        {
-          productId: product.id,
-          productName: product.name,
-          designId: design._id,
-          designCode: design.designCode,
-          designName: design.name,
-          orderedQty: String(qtyNum),
-        },
-      ]);
-    }
-
+    });
     setSelectedProductId("");
-    setSelectedDesignId("");
-    setSelectedQty("");
+    setSelectedQuantity("");
   };
 
-  const removeLine = (productId: string, designId: string) => {
-    setItems((prev) =>
-      prev.filter((i) => !(i.productId === productId && i.designId === designId))
-    );
-  };
+  const removeDraftItem = (productId: string) =>
+    setDraftItems((current) => current.filter((item) => item.productId !== productId));
 
-  // ---------- Create PO ----------
-  const handleCreatePo = async () => {
+  const createPurchaseOrder = async () => {
     setCreateError("");
-    if (!supplierName.trim()) {
-      const msg = "Supplier name is required";
-      setCreateError(msg);
-      showError(msg);
-      return;
-    }
-    if (items.length === 0) {
-      const msg = "Add at least one product/design";
-      setCreateError(msg);
-      showError(msg);
-      return;
-    }
 
-    const payload = {
-      supplierName: supplierName.trim(),
-      notes: notes.trim() || undefined,
-      purchaseDate,
-      items: items.map((i) => ({
-        productId: i.productId,
-        designId: i.designId,
-        designCode: i.designCode,
-        orderedQty: Number(i.orderedQty),
-      })),
-    };
+    if (!supplierName.trim()) {
+      setCreateError("Supplier name is required.");
+      return;
+    }
+    if (draftItems.length === 0) {
+      setCreateError("Add at least one product and quantity.");
+      return;
+    }
 
     try {
       setCreating(true);
-      const res = await fetch("/api/purchase-orders", {
-        credentials: "include",
+      const response = await fetch("/api/purchase-orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          supplierName: supplierName.trim(),
+          notes: notes.trim(),
+          purchaseDate,
+          items: draftItems.map((item) => ({
+            productId: item.productId,
+            orderedQty: item.orderedQty,
+          })),
+        }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const msg = data?.message || "Failed to create PO";
-        setCreateError(msg);
-        showError(msg);
-        return;
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.message || "Could not create the purchase order.");
       }
-      showSuccess("Purchase order created");
+
       setSupplierName("");
       setNotes("");
-      setPurchaseDate(todayDate());
-      setItems([]);
-      await fetchPurchaseOrders();
-    } catch {
-      const msg = "Something went wrong while creating PO";
-      setCreateError(msg);
-      showError(msg);
+      setPurchaseDate(today());
+      setDraftItems([]);
+      showToast("success", "Purchase order created.");
+      await loadPurchaseOrders();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not create the purchase order.";
+      setCreateError(message);
+      showToast("error", message);
     } finally {
       setCreating(false);
     }
   };
 
-  // ---------- Verify modal ----------
-  const openVerifyModal = (order: ListPOItem) => {
-    setSelectedVerifyOrder(order);
-    const vItems: VerifyItem[] = (order.items || []).map((it) => {
-      const productId = getProductId(it.productId);
-      const productName = getProductName(it.productId);
+  const groupedItems = (order: ListPurchaseOrder): DraftItem[] => {
+    const grouped = new Map<string, DraftItem>();
 
-      return {
+    for (const item of order.items || []) {
+      const productId = getProductId(item.productId);
+      const existing = grouped.get(productId);
+      const orderedQty = Number(item.orderedQty || 0);
+
+      grouped.set(productId, {
         productId,
-        designId: String(it.designId),
-        designCode: it.designCode,
-        productName: it.productName || productName,
-        designName: it.designName || 'Unknown design',
-        orderedQty: it.orderedQty,
-        receivedQty: String(it.orderedQty),
-      };
-    });
-    setVerifyItems(vItems);
+        productName: getProductName(item.productId, products),
+        orderedQty: (existing?.orderedQty || 0) + orderedQty,
+      });
+    }
+
+    return [...grouped.values()];
+  };
+
+  const openVerify = (order: ListPurchaseOrder) => {
+    setVerifyOrder(order);
+    setVerifyItems(
+      groupedItems(order).map((item) => ({
+        ...item,
+        receivedQty: String(item.orderedQty),
+      })),
+    );
     setVerifyError("");
   };
 
-  const closeVerifyModal = () => {
-    setSelectedVerifyOrder(null);
+  const closeVerify = () => {
+    if (verifying) return;
+    setVerifyOrder(null);
     setVerifyItems([]);
     setVerifyError("");
   };
 
-  // ---------- Verify PO ----------
-  const handleVerify = async () => {
-    if (!selectedVerifyOrder) return;
-    setVerifyError("");
+  const verifyPurchaseOrder = async () => {
+    if (!verifyOrder) return;
 
-    for (const it of verifyItems) {
-      const qty = Number(it.receivedQty);
-      if (isNaN(qty) || qty < 0) {
-        setVerifyError("All received quantities must be 0 or more");
-        showError("Invalid quantity");
+    for (const item of verifyItems) {
+      const quantity = Number(item.receivedQty);
+      if (!Number.isSafeInteger(quantity) || quantity < 0) {
+        setVerifyError("Each received quantity must be a whole number of 0 or more.");
         return;
       }
     }
 
-    const payload = {
-      items: verifyItems.map((it) => ({
-        productId: it.productId,
-        designCode: it.designCode,
-        receivedQty: Number(it.receivedQty),
-      })),
-    };
-
     try {
       setVerifying(true);
-      const res = await fetch(`/api/purchase-orders/${selectedVerifyOrder._id}/verify`, {
-        credentials: "include",
+      setVerifyError("");
+
+      const response = await fetch(`/api/purchase-orders/${verifyOrder._id}/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          items: verifyItems.map((item) => ({
+            productId: item.productId,
+            receivedQty: Number(item.receivedQty),
+          })),
+        }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const msg = data?.message || "Verification failed";
-        setVerifyError(msg);
-        showError(msg);
-        return;
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.message || "Could not verify this purchase order.");
       }
-      showSuccess("Order verified & design-specific raw stock updated");
-      closeVerifyModal();
-      await fetchPurchaseOrders();
-      window.location.reload();
-    } catch {
-      const msg = "Something went wrong during verification";
-      setVerifyError(msg);
-      showError(msg);
+
+      closeVerify();
+      showToast("success", "Order verified. RAW stock has been added by product.");
+      await loadPurchaseOrders();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not verify this purchase order.";
+      setVerifyError(message);
+      showToast("error", message);
     } finally {
       setVerifying(false);
     }
   };
 
-  // ---------- Update date ----------
-  const updatePurchaseOrderDate = async (poId: string, newDate: string) => {
+  const updatePurchaseOrderDate = async (orderId: string, newPurchaseDate: string) => {
     try {
-      setListError("");
-      const res = await fetch(`/api/purchase-orders/${poId}`, {
-        credentials: "include",
+      const response = await fetch(`/api/purchase-orders/${orderId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ purchaseDate: newDate }),
+        body: JSON.stringify({ purchaseDate: newPurchaseDate }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const msg = data?.message || "Failed to update date";
-        showError(msg);
-        return;
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.message || "Could not update the purchase date.");
       }
-      showSuccess("Purchase date updated");
-      await fetchPurchaseOrders();
-    } catch {
-      showError("Something went wrong updating date");
+
+      showToast("success", "Purchase date updated.");
+      await loadPurchaseOrders();
+    } catch (error) {
+      showToast(
+        "error",
+        error instanceof Error ? error.message : "Could not update the purchase date.",
+      );
     }
   };
 
-  // ---------- Draft summary for creation form ----------
-  const draftSummary = useMemo(() => {
-    if (items.length === 0) return "";
-    return items
-      .map((i) => `${i.productName} - ${i.designName} (${i.designCode}) - ${i.orderedQty}pcs`)
-      .join(", ");
-  }, [items]);
-
-  const copyDraftSummary = async () => {
-    if (!draftSummary) {
-      showError("Add at least one product first");
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(draftSummary);
-      setCopiedSummary(true);
-      showSuccess("Summary copied");
-    } catch {
-      showError("Clipboard copy failed");
-    }
-  };
-
-  // ---------- WhatsApp for creation draft ----------
-  const openWhatsAppDraft = () => {
-    if (!draftSummary) {
-      showError("Add at least one product first");
-      return;
-    }
-    const message = encodeURIComponent(draftSummary);
-    window.open(`https://wa.me/?text=${message}`, "_blank", "noopener,noreferrer");
-  };
-
-  // ---------- WhatsApp for selected orders ----------
-  const generateWhatsAppMessageFromSelectedOrders = () => {
-    if (selectedOrderIds.size === 0) {
-      showError("Select at least one order");
-      return null;
-    }
-
-    // Aggregate quantities by product name
-    const productTotals: Record<string, number> = {};
-
-    for (const order of purchaseOrders) {
-      if (!selectedOrderIds.has(order._id)) continue;
-
-      for (const item of order.items) {
-        const productName = getProductName(item.productId);
-        const qty = item.orderedQty || 0;
-        if (productName && qty > 0) {
-          productTotals[productName] = (productTotals[productName] || 0) + qty;
-        }
-      }
-    }
-
-    // Build message
-    const dateLine = formatDateForWhatsApp(new Date());
-    const productLines = Object.entries(productTotals)
-      .sort((a, b) => a[0].localeCompare(b[0])) // alphabetical
-      .map(([name, total]) => `${name} = ${total}`)
-      .join('\n');
-
-    return `${dateLine}\n${productLines}`;
-  };
-
-  const openWhatsAppSelected = () => {
-    const message = generateWhatsAppMessageFromSelectedOrders();
-    if (!message) return;
-    const encoded = encodeURIComponent(message);
-    window.open(`https://wa.me/?text=${encoded}`, "_blank", "noopener,noreferrer");
-  };
-
-  // Toggle selection for an order
-  const toggleSelectOrder = (orderId: string) => {
-    setSelectedOrderIds((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(orderId)) {
-        newSet.delete(orderId);
+  const toggleOrderSelection = (orderId: string) => {
+    setSelectedOrderIds((current) => {
+      const next = new Set(current);
+      if (next.has(orderId)) {
+        next.delete(orderId);
       } else {
-        newSet.add(orderId);
+        next.add(orderId);
       }
-      return newSet;
+      return next;
     });
   };
 
-  // Select/deselect all
-  const toggleSelectAll = () => {
-    if (selectedOrderIds.size === purchaseOrders.length) {
-      setSelectedOrderIds(new Set());
-    } else {
-      setSelectedOrderIds(new Set(purchaseOrders.map((o) => o._id)));
-    }
+  const toggleAllOrders = () => {
+    setSelectedOrderIds((current) =>
+      current.size === purchaseOrders.length
+        ? new Set()
+        : new Set(purchaseOrders.map((order) => order._id)),
+    );
   };
 
-  // ---------- Render ----------
+  const buildSelectedOrderSummary = () => {
+    const quantities = new Map<string, number>();
+
+    for (const order of purchaseOrders) {
+      if (!selectedOrderIds.has(order._id)) continue;
+      for (const item of groupedItems(order)) {
+        quantities.set(item.productName, (quantities.get(item.productName) || 0) + item.orderedQty);
+      }
+    }
+
+    return [...quantities.entries()]
+      .sort(([first], [second]) => first.localeCompare(second))
+      .map(([name, quantity]) => `${name} = ${quantity}`)
+      .join("\n");
+  };
+
+  const sendSelectedToWhatsApp = () => {
+    const selectedOrderSummary = buildSelectedOrderSummary();
+    if (!selectedOrderSummary) {
+      showToast("error", "Select at least one purchase order first.");
+      return;
+    }
+    window.open(
+      `https://wa.me/?text=${encodeURIComponent(`${formatWhatsAppDate()}\n${selectedOrderSummary}`)}`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+  };
+
   return (
-    <section className="relative rounded-2xl border border-slate-200 bg-white p-4 space-y-5">
-      {/* Toast */}
+    <section className="relative space-y-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
       {toast && (
-        <div className="absolute right-4 top-4 z-10">
-          <div
-            className={`rounded-xl px-3 py-2 text-xs shadow-sm border ${
-              toast.type === "success"
-                ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                : "bg-red-50 border-red-200 text-red-700"
-            }`}
-          >
-            {toast.message}
-          </div>
+        <div
+          role="status"
+          className={`fixed right-5 top-5 z-50 rounded-xl border px-4 py-3 text-sm shadow-lg ${
+            toast.kind === "success"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+              : "border-rose-200 bg-rose-50 text-rose-800"
+          }`}
+        >
+          {toast.message}
         </div>
       )}
 
-      <div className="flex flex-col gap-1 pr-24">
-        <h2 className="text-sm font-semibold">Purchase Orders</h2>
-        <p className="text-xs text-slate-500">
-          Create PENDING orders with product+design, then verify to update RAW stock per design.
+      <header>
+        <p className="text-xs font-medium uppercase tracking-[0.16em] text-indigo-600">
+          Product-only purchasing
         </p>
-      </div>
+        <h2 className="mt-1 text-xl font-semibold text-slate-900">Purchase orders</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          Select a phone model and quantity. When verified, the received quantity is added to that model&apos;s RAW stock.
+        </p>
+      </header>
 
-      {/* Create PO form */}
-      <div className="border border-slate-100 rounded-xl p-3 space-y-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:gap-3">
-          <div className="flex-1">
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Supplier name
-            </label>
+      <section className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+        <div className="grid gap-3 md:grid-cols-[1fr_1fr_170px]">
+          <label>
+            <span className="mb-1 block text-xs font-medium text-slate-700">Supplier name *</span>
             <input
-              type="text"
               value={supplierName}
-              onChange={(e) => setSupplierName(e.target.value)}
+              onChange={(event) => setSupplierName(event.target.value)}
               placeholder="e.g. Sadar Bazar Vendor"
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
             />
-          </div>
-          <div className="flex-1">
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Notes (optional)
-            </label>
+          </label>
+          <label>
+            <span className="mb-1 block text-xs font-medium text-slate-700">Notes</span>
             <input
-              type="text"
               value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="e.g. urgent restock"
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100"
+              onChange={(event) => setNotes(event.target.value)}
+              placeholder="Optional note"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
             />
-          </div>
-          <div className="w-full sm:w-40">
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Purchase date
-            </label>
+          </label>
+          <label>
+            <span className="mb-1 block text-xs font-medium text-slate-700">Purchase date</span>
             <input
               type="date"
               value={purchaseDate}
-              onChange={(e) => setPurchaseDate(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100"
+              onChange={(event) => setPurchaseDate(event.target.value)}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
             />
-          </div>
+          </label>
         </div>
 
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
-          <div className="flex-1">
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Product
-            </label>
+        <div className="mt-4 grid gap-3 border-t border-slate-200 pt-4 md:grid-cols-[1fr_160px_auto] md:items-end">
+          <label>
+            <span className="mb-1 block text-xs font-medium text-slate-700">Product *</span>
             <select
               value={selectedProductId}
-              onChange={(e) => setSelectedProductId(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100"
+              onChange={(event) => setSelectedProductId(event.target.value)}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
             >
               <option value="">Select product</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
+              {products.map((product) => (
+                <option key={product.id} value={product.id}>{product.name}</option>
               ))}
             </select>
-          </div>
-          <div className="flex-1">
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Design/Model
-            </label>
-            <select
-              value={selectedDesignId}
-              onChange={(e) => setSelectedDesignId(e.target.value)}
-              disabled={!selectedProductId || loadingDesigns}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-60"
-            >
-              <option value="">
-                {loadingDesigns ? "Loading..." : "Select design"}
-              </option>
-              {designs.map((d) => (
-                <option key={d._id} value={d._id}>
-                  {d.name} ({d.designCode})
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="w-full sm:w-32">
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Order qty
-            </label>
+          </label>
+          <label>
+            <span className="mb-1 block text-xs font-medium text-slate-700">Order quantity *</span>
             <input
               type="number"
-              min={1}
-              value={selectedQty}
-              onChange={(e) => setSelectedQty(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100"
+              min="1"
+              step="1"
+              inputMode="numeric"
+              value={selectedQuantity}
+              onChange={(event) => setSelectedQuantity(event.target.value)}
+              placeholder="e.g. 100"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
             />
-          </div>
+          </label>
           <button
             type="button"
-            onClick={addLine}
-            className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500"
+            onClick={addProductLine}
+            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
           >
-            Add
+            Add product
           </button>
         </div>
 
-        <div className="border-t border-slate-100 pt-3">
-          <h3 className="text-[11px] font-medium text-slate-600 mb-2">Items</h3>
-          {items.length === 0 ? (
-            <p className="text-[11px] text-slate-400">No items added.</p>
+        <div className="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <div className="grid grid-cols-[1fr_120px_auto] gap-3 bg-slate-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            <span>Product</span><span>Quantity</span><span />
+          </div>
+          {draftItems.length === 0 ? (
+            <p className="px-3 py-5 text-sm text-slate-500">Choose a product and add its quantity.</p>
           ) : (
-            <div className="max-h-40 overflow-y-auto">
-              <table className="min-w-full text-[11px]">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-medium text-slate-500">Product</th>
-                    <th className="px-3 py-2 text-left font-medium text-slate-500">Design</th>
-                    <th className="px-3 py-2 text-left font-medium text-slate-500">Ordered</th>
-                    <th className="px-3 py-2"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {items.map((i) => (
-                    <tr key={`${i.productId}-${i.designId}`}>
-                      <td className="px-3 py-1.5">{i.productName}</td>
-                      <td className="px-3 py-1.5">
-                        {i.designName} ({i.designCode})
-                      </td>
-                      <td className="px-3 py-1.5">{i.orderedQty}</td>
-                      <td className="px-3 py-1.5 text-right">
-                        <button
-                          type="button"
-                          onClick={() => removeLine(i.productId, i.designId)}
-                          className="text-[11px] text-red-600 hover:underline"
-                        >
-                          Remove
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            draftItems.map((item) => (
+              <div key={item.productId} className="grid grid-cols-[1fr_120px_auto] items-center gap-3 border-t border-slate-100 px-3 py-2.5 text-sm">
+                <span className="font-medium text-slate-800">{item.productName}</span>
+                <span className="text-slate-700">{item.orderedQty}</span>
+                <button type="button" onClick={() => removeDraftItem(item.productId)} className="text-xs font-medium text-rose-600 hover:underline">Remove</button>
+              </div>
+            ))
           )}
         </div>
 
-        {createError && (
-          <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
-            {createError}
-          </p>
-        )}
+        {createError && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{createError}</p>}
 
-        <div className="flex justify-end">
+        <div className="mt-4 flex justify-end">
           <button
             type="button"
+            onClick={createPurchaseOrder}
             disabled={creating}
-            onClick={handleCreatePo}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-60"
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-400"
           >
-            {creating ? "Creating..." : "Create PO"}
+            {creating ? "Creating..." : "Create purchase order"}
           </button>
         </div>
-      </div>
+      </section>
 
-      {/* List of all purchase orders with selection */}
-      <div className="border border-slate-100 rounded-xl p-3 space-y-3">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-3">
-            <h3 className="text-sm font-semibold">All Purchase Orders</h3>
-            <button
-              type="button"
-              onClick={fetchPurchaseOrders}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
-              disabled={listLoading}
-            >
-              {listLoading ? "Loading..." : "Refresh"}
-            </button>
+      <section className="rounded-xl border border-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-4">
+          <div>
+            <h3 className="font-semibold text-slate-900">All purchase orders</h3>
+            <p className="mt-0.5 text-xs text-slate-500">Verify an order after stock has arrived.</p>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={openWhatsAppSelected}
-              disabled={selectedOrderIds.size === 0}
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Send WhatsApp ({selectedOrderIds.size})
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={loadPurchaseOrders} disabled={loadingOrders} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+              {loadingOrders ? "Loading..." : "Refresh"}
             </button>
-            <button
-              type="button"
-              onClick={toggleSelectAll}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
-            >
-              {selectedOrderIds.size === purchaseOrders.length ? "Deselect All" : "Select All"}
+            <button type="button" onClick={sendSelectedToWhatsApp} disabled={selectedOrderIds.size === 0} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">
+              Send WhatsApp ({selectedOrderIds.size})
             </button>
           </div>
         </div>
 
-        {listError && (
-          <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
-            {listError}
-          </p>
-        )}
+        {ordersError && <p className="m-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{ordersError}</p>}
 
-        {purchaseOrders.length === 0 && !listLoading ? (
-          <p className="text-xs text-slate-400">No purchase orders found.</p>
+        {purchaseOrders.length === 0 && !loadingOrders ? (
+          <p className="p-8 text-center text-sm text-slate-500">No purchase orders yet.</p>
         ) : (
-          <div className="overflow-x-auto border border-slate-100 rounded-lg">
-            <table className="min-w-full text-[11px]">
-              <thead className="bg-slate-50">
+          <div className="overflow-x-auto">
+            <table className="min-w-[830px] w-full text-left text-sm">
+              <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
                 <tr>
-                  <th className="px-3 py-2 text-left text-slate-500 font-medium w-8">
-                    <input
-                      type="checkbox"
-                      checked={selectedOrderIds.size === purchaseOrders.length && purchaseOrders.length > 0}
-                      onChange={toggleSelectAll}
-                      className="rounded border-slate-300"
-                    />
-                  </th>
-                  <th className="px-3 py-2 text-left text-slate-500 font-medium">Supplier</th>
-                  <th className="px-3 py-2 text-left text-slate-500 font-medium">Notes</th>
-                  <th className="px-3 py-2 text-left text-slate-500 font-medium">Date</th>
-                  <th className="px-3 py-2 text-left text-slate-500 font-medium">Items</th>
-                  <th className="px-3 py-2 text-left text-slate-500 font-medium">Status</th>
-                  <th className="px-3 py-2 text-left text-slate-500 font-medium">Actions</th>
+                  <th className="w-10 px-4 py-3"><input type="checkbox" checked={purchaseOrders.length > 0 && selectedOrderIds.size === purchaseOrders.length} onChange={toggleAllOrders} aria-label="Select all purchase orders" /></th>
+                  <th className="px-4 py-3">Supplier</th>
+                  <th className="px-4 py-3">Date</th>
+                  <th className="px-4 py-3">Products</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3 text-right">Action</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {purchaseOrders.map((po) => (
-                  <tr key={po._id}>
-                    <td className="px-3 py-2">
-                      <input
-                        type="checkbox"
-                        checked={selectedOrderIds.has(po._id)}
-                        onChange={() => toggleSelectOrder(po._id)}
-                        className="rounded border-slate-300"
-                      />
-                    </td>
-                    <td className="px-3 py-2 font-medium text-slate-800">{po.supplierName}</td>
-                    <td className="px-3 py-2 text-slate-600">{po.notes || "-"}</td>
-                    <td className="px-3 py-2 text-slate-600">
-                      <input
-                        type="date"
-                        value={po.purchaseDate ? po.purchaseDate.slice(0, 10) : ""}
-                        onChange={(e) => updatePurchaseOrderDate(po._id, e.target.value)}
-                        className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-100"
-                      />
-                    </td>
-                    <td className="px-3 py-2 text-slate-600">
-                      <div className="space-y-1">
-                        {(po.items || []).map((it) => {
-                          const pName = getProductName(it.productId);
-                          const dName = it.designName || it.designCode || "Unknown design";
-                          return (
-                            <div key={`${String(it.productId)}-${String(it.designId)}`}>
-                              {pName} – {dName} – {it.orderedQty} pcs
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2">
-                      <span
-                        className={`inline-flex rounded-full px-2 py-1 text-[10px] font-medium ${
-                          po.status === "VERIFIED"
-                            ? "bg-emerald-100 text-emerald-700"
-                            : "bg-slate-100 text-slate-700"
-                        }`}
-                      >
-                        {po.status}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">
-                      {po.status === "PENDING" && (
-                        <button
-                          type="button"
-                          onClick={() => openVerifyModal(po)}
-                          className="rounded-lg bg-emerald-600 px-3 py-1 text-[11px] font-medium text-white hover:bg-emerald-500"
-                        >
-                          Verify
-                        </button>
-                      )}
-                      {po.status === "VERIFIED" && (
-                        <span className="text-[11px] text-slate-400">✅ Done</span>
-                      )}
-                    </td>
+              <tbody>
+                {purchaseOrders.map((order) => (
+                  <tr key={order._id} className="border-t border-slate-100 align-top">
+                    <td className="px-4 py-3"><input type="checkbox" checked={selectedOrderIds.has(order._id)} onChange={() => toggleOrderSelection(order._id)} aria-label={`Select order from ${order.supplierName}`} /></td>
+                    <td className="px-4 py-3"><p className="font-medium text-slate-800">{order.supplierName}</p>{order.notes && <p className="mt-1 text-xs text-slate-500">{order.notes}</p>}</td>
+                    <td className="px-4 py-3"><input type="date" value={formatOrderDate(order.purchaseDate)} onChange={(event) => updatePurchaseOrderDate(order._id, event.target.value)} disabled={order.status !== "PENDING"} className="rounded-md border border-slate-300 px-2 py-1 text-xs disabled:border-transparent disabled:bg-transparent" /></td>
+                    <td className="px-4 py-3"><div className="space-y-1.5">{groupedItems(order).map((item) => <p key={item.productId} className="text-sm text-slate-700"><span className="font-medium">{item.productName}</span><span className="text-slate-500"> · {item.orderedQty} pcs</span></p>)}</div></td>
+                    <td className="px-4 py-3"><span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${order.status === "VERIFIED" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>{order.status}</span></td>
+                    <td className="px-4 py-3 text-right">{order.status === "PENDING" ? <button type="button" onClick={() => openVerify(order)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700">Verify</button> : <span className="text-xs text-slate-400">RAW added</span>}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </section>
 
-      {/* Verify Modal */}
-      {selectedVerifyOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl max-w-lg w-full p-6 space-y-4 shadow-xl">
-            <div className="flex justify-between items-start">
+      {verifyOrder && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4" onClick={closeVerify}>
+          <div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
               <div>
-                <h3 className="text-base font-semibold text-slate-800">
-                  Verify Order – {selectedVerifyOrder.supplierName}
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Enter received quantities for each product+design.
-                </p>
+                <p className="text-xs font-medium uppercase tracking-[0.16em] text-emerald-600">Verify arrival</p>
+                <h3 className="mt-1 text-lg font-semibold text-slate-900">{verifyOrder.supplierName}</h3>
+                <p className="mt-1 text-sm text-slate-500">Enter what was received. This will be added to each product&apos;s RAW stock.</p>
               </div>
-              <button
-                type="button"
-                onClick={closeVerifyModal}
-                className="text-slate-400 hover:text-slate-600"
-              >
-                ✕
-              </button>
+              <button type="button" onClick={closeVerify} disabled={verifying} className="rounded-md p-1 text-xl text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close verification">×</button>
             </div>
 
-            <div className="border border-slate-100 rounded-lg overflow-hidden">
-              <table className="min-w-full text-[11px]">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="px-3 py-2 text-left text-slate-500 font-medium">Product</th>
-                    <th className="px-3 py-2 text-left text-slate-500 font-medium">Design</th>
-                    <th className="px-3 py-2 text-left text-slate-500 font-medium">Ordered</th>
-                    <th className="px-3 py-2 text-left text-slate-500 font-medium">Received</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {verifyItems.map((it) => (
-                    <tr key={`${it.productId}-${it.designId}`}>
-                      <td className="px-3 py-1.5">{it.productName}</td>
-                      <td className="px-3 py-1.5">{it.designName} ({it.designCode})</td>
-                      <td className="px-3 py-1.5">{it.orderedQty}</td>
-                      <td className="px-3 py-1.5">
-                        <input
-                          type="number"
-                          min={0}
-                          value={it.receivedQty}
-                          onChange={(e) => {
-                            const newVal = e.target.value;
-                            setVerifyItems((prev) =>
-                              prev.map((v) =>
-                                v.productId === it.productId && v.designId === it.designId
-                                  ? { ...v, receivedQty: newVal }
-                                  : v
-                              )
-                            );
-                          }}
-                          className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-100"
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="mt-5 overflow-hidden rounded-lg border border-slate-200">
+              <div className="grid grid-cols-[1fr_100px_110px] gap-3 bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500"><span>Product</span><span>Ordered</span><span>Received</span></div>
+              {verifyItems.map((item) => (
+                <div key={item.productId} className="grid grid-cols-[1fr_100px_110px] items-center gap-3 border-t border-slate-100 px-3 py-2.5 text-sm">
+                  <span className="font-medium text-slate-800">{item.productName}</span>
+                  <span className="text-slate-600">{item.orderedQty}</span>
+                  <input type="number" min="0" step="1" inputMode="numeric" value={item.receivedQty} onChange={(event) => setVerifyItems((current) => current.map((currentItem) => currentItem.productId === item.productId ? { ...currentItem, receivedQty: event.target.value } : currentItem))} className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" />
+                </div>
+              ))}
             </div>
 
-            {verifyError && (
-              <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
-                {verifyError}
-              </p>
-            )}
+            {verifyError && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{verifyError}</p>}
 
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={closeVerifyModal}
-                className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={verifying}
-                onClick={handleVerify}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-60"
-              >
-                {verifying ? "Verifying..." : "Confirm Verify"}
-              </button>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={closeVerify} disabled={verifying} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+              <button type="button" onClick={verifyPurchaseOrder} disabled={verifying} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300">{verifying ? "Verifying..." : "Confirm and add RAW stock"}</button>
             </div>
           </div>
         </div>

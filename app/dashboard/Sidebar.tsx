@@ -2,7 +2,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useState } from "react";
 
 type NavLink = {
   label: string;
@@ -32,6 +33,20 @@ function isActive(pathname: string, link: NavLink) {
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    if (isLoggingOut) return;
+
+    try {
+      setIsLoggingOut(true);
+      await fetch("/api/logout", { method: "POST" });
+    } finally {
+      router.replace("/login");
+      router.refresh();
+    }
+  };
 
   return (
     <aside className="fixed left-0 top-0 hidden h-screen w-64 border-r border-slate-200 bg-white lg:flex lg:flex-col">
@@ -65,6 +80,18 @@ export default function Sidebar() {
           );
         })}
       </nav>
+
+      <div className="border-t border-slate-200 p-4">
+        <button
+          type="button"
+          onClick={handleLogout}
+          disabled={isLoggingOut}
+          className="flex w-full items-center justify-center gap-2 rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-700 transition-colors hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <span aria-hidden="true">↪</span>
+          {isLoggingOut ? "Logging out..." : "Logout"}
+        </button>
+      </div>
     </aside>
   );
 }

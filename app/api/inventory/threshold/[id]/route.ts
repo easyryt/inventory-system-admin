@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
-const BACKEND_URL = "https://inventory-system-ecew.onrender.com";
+const BACKEND_URL = " https://inventory-system-24ly.onrender.com";
 
 export async function PATCH(
   req: NextRequest,

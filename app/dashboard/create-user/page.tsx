@@ -21,7 +21,7 @@ export default function CreateUserPage() {
     setError("");
 
     try {
-      const res = await fetch("https://inventory-system-ecew.onrender.com/api/auth/register", {
+      const res = await fetch(" https://inventory-system-24ly.onrender.com/api/auth/register", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
