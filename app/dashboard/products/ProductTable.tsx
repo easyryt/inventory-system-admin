@@ -1,7 +1,8 @@
 // app/dashboard/products/ProductTable.tsx
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 type MetaField = {
   key: string;
@@ -30,40 +31,70 @@ type Props = {
   products: Product[];
 };
 
-export default function ProductTable({ categories, products }: Props) {
+export default function ProductTable({
+  categories,
+  products,
+}: Props) {
+  const router = useRouter();
+
+  // Local table state
   const [items, setItems] = useState<Product[]>(products);
+
+  // Keep local state synchronized with the Server Component
+  // after router.refresh().
+  useEffect(() => {
+    setItems(products);
+  }, [products]);
 
   const [search, setSearch] = useState("");
 
-  // modal state (create + edit share same modal)
+  // Modal state
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [categoryId, setCategoryId] = useState<string>("");
+
+  const [categoryId, setCategoryId] = useState("");
   const [name, setName] = useState("");
-  const [attributes, setAttributes] = useState<Record<string, string>>({});
+  const [attributes, setAttributes] =
+    useState<Record<string, string>>({});
+
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const isEdit = Boolean(editingId);
 
+  // Selected category for the current form
   const selectedCategory = useMemo(
-    () => categories.find((c) => c._id === categoryId),
+    () =>
+      categories.find(
+        (category) => category._id === categoryId
+      ),
     [categories, categoryId]
   );
 
+  // Search/filter products
   const filteredProducts = useMemo(() => {
     const term = search.trim().toLowerCase();
-    if (!term) return items;
-    return items.filter((p) => {
-      const catName = p.categoryId?.name ?? "";
+
+    if (!term) {
+      return items;
+    }
+
+    return items.filter((product) => {
+      const productName =
+        product.name?.toLowerCase() ?? "";
+
+      const categoryName =
+        product.categoryId?.name?.toLowerCase() ?? "";
+
       return (
-        p.name.toLowerCase().includes(term) ||
-        catName.toLowerCase().includes(term)
+        productName.includes(term) ||
+        categoryName.includes(term)
       );
     });
   }, [items, search]);
 
-  // open for create
+  // Open create modal
   const openCreateModal = () => {
     setEditingId(null);
     setCategoryId("");
@@ -73,50 +104,79 @@ export default function ProductTable({ categories, products }: Props) {
     setOpen(true);
   };
 
-  // open for edit
-  const openEditModal = (prod: Product) => {
-    setEditingId(prod._id);
-    setCategoryId(prod.categoryId?._id || "");
-    setName(prod.name);
-    setAttributes(prod.attributes || {});
+  // Open edit modal
+  const openEditModal = (product: Product) => {
+    setEditingId(product._id);
+    setCategoryId(product.categoryId?._id || "");
+    setName(product.name || "");
+    setAttributes(product.attributes || {});
     setError("");
     setOpen(true);
   };
 
+  // Close modal
   const closeModal = () => {
+    if (loading) return;
+
     setOpen(false);
-  };
-
-  const handleChangeAttribute = (key: string, value: string) => {
-    setAttributes((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const handleCategoryChange = (id: string) => {
-    setCategoryId(id);
-    setAttributes({});
     setError("");
   };
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Change dynamic attribute
+  const handleChangeAttribute = (
+    key: string,
+    value: string
+  ) => {
+    setAttributes((prev) => ({
+      ...prev,
+      [key]: value,
+    }));
 
+    setError("");
+  };
+
+  // Change category
+  const handleCategoryChange = (id: string) => {
+    setCategoryId(id);
+
+    // Reset attributes because category changed
+    setAttributes({});
+
+    setError("");
+  };
+
+  // Create / Update product
+  const handleSave = async (
+    event: React.FormEvent<HTMLFormElement>
+  ) => {
+    event.preventDefault();
+
+    if (loading) return;
+
+    // Validate category
     if (!categoryId) {
       setError("Category is required");
       return;
     }
+
+    // Validate product name
     if (!name.trim()) {
       setError("Product name is required");
       return;
     }
 
+    // Validate required attributes
     if (selectedCategory) {
-      for (const mf of selectedCategory.metaFields || []) {
-        if (mf.required) {
-          const val = attributes[mf.key];
-          if (!val || !val.trim()) {
-            setError(`Field "${mf.label}" is required`);
-            return;
-          }
+      for (const field of selectedCategory.metaFields || []) {
+        if (!field.required) continue;
+
+        const value = attributes[field.key];
+
+        if (!value || !value.trim()) {
+          setError(
+            `Field "${field.label}" is required`
+          );
+          return;
         }
       }
     }
@@ -131,10 +191,13 @@ export default function ProductTable({ categories, products }: Props) {
         attributes,
       };
 
-      const url = isEdit ? `/api/products/${editingId}` : "/api/products";
+      const url = isEdit
+        ? `/api/products/${editingId}`
+        : "/api/products";
+
       const method = isEdit ? "PUT" : "POST";
 
-      const res = await fetch(url, {
+      const response = await fetch(url, {
         method,
         headers: {
           "Content-Type": "application/json",
@@ -142,71 +205,145 @@ export default function ProductTable({ categories, products }: Props) {
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const data = await response
+        .json()
+        .catch(() => ({}));
 
-      if (!res.ok) {
-        setError(data.message || "Failed to save product");
+      if (!response.ok) {
+        setError(
+          data.message ||
+            `Failed to ${isEdit ? "update" : "create"} product`
+        );
         setLoading(false);
         return;
       }
 
-      const saved: Product = data.product ?? data;
+      /*
+       * IMPORTANT:
+       * Do NOT put data.product directly into items here.
+       *
+       * The POST/PUT response may contain categoryId only as
+       * an ObjectId/string, while the table needs:
+       *
+       * categoryId.name
+       * categoryId.metaFields
+       *
+       * router.refresh() causes the Server Component to fetch
+       * the populated product again.
+       */
 
-      setItems((prev) => {
-        if (isEdit) {
-          return prev.map((p) => (p._id === saved._id ? saved : p));
-        }
-        return [...prev, saved];
-      });
-
+      // Reset form
       setOpen(false);
+      setEditingId(null);
+      setCategoryId("");
+      setName("");
+      setAttributes({});
+      setError("");
       setLoading(false);
-    } catch {
-      setError("Something went wrong");
+
+      // Fetch fresh server-side data
+      router.refresh();
+    } catch (cause) {
+      console.error("Save product error:", cause);
+
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Something went wrong. Please try again."
+      );
+
       setLoading(false);
     }
   };
 
+  // Delete product
   const handleDelete = async (id: string) => {
-    if (!confirm("Delete this product?")) return;
+    if (deletingId) return;
+
+    const confirmed = window.confirm(
+      "Delete this product?"
+    );
+
+    if (!confirmed) return;
 
     try {
-      const res = await fetch(`/api/products/${id}`, {
-        method: "DELETE",
-      });
+      setDeletingId(id);
 
-      if (!res.ok) {
-        alert("Failed to delete product");
+      const response = await fetch(
+        `/api/products/${id}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      const data = await response
+        .json()
+        .catch(() => ({}));
+
+      if (!response.ok) {
+        window.alert(
+          data.message ||
+            "Failed to delete product"
+        );
+        setDeletingId(null);
         return;
       }
 
-      setItems((prev) => prev.filter((p) => p._id !== id));
-    } catch {
-      alert("Something went wrong");
+      // Remove immediately from UI
+      setItems((current) =>
+        current.filter(
+          (product) => product._id !== id
+        )
+      );
+
+      // Keep server state synchronized
+      router.refresh();
+    } catch (cause) {
+      console.error(
+        "Delete product error:",
+        cause
+      );
+
+      window.alert(
+        cause instanceof Error
+          ? cause.message
+          : "Something went wrong"
+      );
+    } finally {
+      setDeletingId(null);
     }
   };
 
   return (
     <>
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+        {/* Header */}
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            {/* Search */}
             <input
               type="text"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(event) =>
+                setSearch(event.target.value)
+              }
               placeholder="Search product / category..."
-              className="w-full sm:w-64 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 sm:w-64"
             />
+
+            {/* Create button */}
             <button
+              type="button"
               onClick={openCreateModal}
-              className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
+              disabled={loading}
+              className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
               New product
             </button>
           </div>
         </div>
 
+        {/* Product table */}
         <div className="overflow-x-auto">
           <table className="min-w-full text-xs">
             <thead className="bg-slate-50">
@@ -214,63 +351,101 @@ export default function ProductTable({ categories, products }: Props) {
                 <th className="px-3 py-2 text-left font-medium text-slate-500">
                   Name
                 </th>
+
                 <th className="px-3 py-2 text-left font-medium text-slate-500">
                   Category
                 </th>
+
                 <th className="px-3 py-2 text-left font-medium text-slate-500">
                   Attributes
                 </th>
+
                 <th className="px-3 py-2 text-left font-medium text-slate-500">
                   Actions
                 </th>
               </tr>
             </thead>
+
             <tbody className="divide-y divide-slate-100">
-              {filteredProducts.map((p) => (
-                <tr key={p._id}>
-                  <td className="px-3 py-2">{p.name}</td>
-                  <td className="px-3 py-2 text-slate-500">
-                    {p.categoryId?.name}
+              {filteredProducts.map((product) => (
+                <tr key={product._id}>
+                  {/* Name */}
+                  <td className="px-3 py-2">
+                    {product.name}
                   </td>
+
+                  {/* Category */}
+                  <td className="px-3 py-2 text-slate-500">
+                    {product.categoryId?.name || "—"}
+                  </td>
+
+                  {/* Attributes */}
                   <td className="px-3 py-2 text-slate-500">
                     <div className="flex flex-wrap gap-1">
-                      {p.categoryId?.metaFields?.map((mf) => (
-                        <span
-                          key={mf.key}
-                          className="inline-flex items-center rounded-full bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700 border border-slate-200"
-                        >
-                          {mf.label}:{" "}
-                          <span className="ml-1 text-slate-500">
-                            {p.attributes?.[mf.key]}
+                      {product.categoryId?.metaFields?.map(
+                        (field) => (
+                          <span
+                            key={field.key}
+                            className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700"
+                          >
+                            {field.label}:
+
+                            <span className="ml-1 text-slate-500">
+                              {product.attributes?.[
+                                field.key
+                              ] ?? "—"}
+                            </span>
                           </span>
-                        </span>
-                      ))}
+                        )
+                      )}
                     </div>
                   </td>
-                  <td className="px-3 py-2 space-x-2">
+
+                  {/* Actions */}
+                  <td className="space-x-2 px-3 py-2">
                     <button
-                      onClick={() => openEditModal(p)}
-                      className="rounded-full border border-slate-200 px-3 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
+                      type="button"
+                      onClick={() =>
+                        openEditModal(product)
+                      }
+                      disabled={
+                        loading ||
+                        deletingId === product._id
+                      }
+                      className="rounded-full border border-slate-200 px-3 py-1 text-[11px] text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Edit
                     </button>
+
                     <button
-                      onClick={() => handleDelete(p._id)}
-                      className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-[11px] text-red-700 hover:bg-red-100"
+                      type="button"
+                      onClick={() =>
+                        handleDelete(product._id)
+                      }
+                      disabled={
+                        deletingId === product._id ||
+                        loading
+                      }
+                      className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-[11px] text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      Delete
+                      {deletingId === product._id
+                        ? "Deleting..."
+                        : "Delete"}
                     </button>
                   </td>
                 </tr>
               ))}
 
+              {/* Empty state */}
               {filteredProducts.length === 0 && (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={4}
                     className="px-3 py-6 text-center text-slate-500"
                   >
-                    No products yet. Create your first one.
+                    {search.trim()
+                      ? "No matching products found."
+                      : "No products yet. Create your first one."}
                   </td>
                 </tr>
               )}
@@ -279,111 +454,157 @@ export default function ProductTable({ categories, products }: Props) {
         </div>
       </section>
 
-      {/* Create/Edit product modal */}
+      {/* Create / Edit modal */}
       {open && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/20 px-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl border border-slate-200 p-4">
-            <div className="flex items-center justify-between mb-3">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+            {/* Modal header */}
+            <div className="mb-3 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-semibold">
-                  {isEdit ? "Edit product" : "New product"}
+                  {isEdit
+                    ? "Edit product"
+                    : "New product"}
                 </h3>
+
                 <p className="text-xs text-slate-500">
-                  Choose a category and fill in its attributes.
+                  Choose a category and fill in its
+                  attributes.
                 </p>
               </div>
+
               <button
+                type="button"
                 onClick={closeModal}
-                className="rounded-full border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50"
+                disabled={loading}
+                className="rounded-full border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Close
               </button>
             </div>
 
+            {/* Form */}
             <form
               onSubmit={handleSave}
-              className="space-y-3 max-h-[70vh] overflow-y-auto"
+              className="max-h-[70vh] space-y-3 overflow-y-auto"
             >
+              {/* Category */}
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">
+                <label className="mb-1 block text-xs font-medium text-slate-600">
                   Category
                 </label>
+
                 <select
                   value={categoryId}
-                  onChange={(e) => handleCategoryChange(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
+                  onChange={(event) =>
+                    handleCategoryChange(
+                      event.target.value
+                    )
+                  }
+                  disabled={loading}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
                 >
-                  <option value="">Select category</option>
-                  {categories.map((c) => (
-                    <option key={c._id} value={c._id}>
-                      {c.name}
+                  <option value="">
+                    Select category
+                  </option>
+
+                  {categories.map((category) => (
+                    <option
+                      key={category._id}
+                      value={category._id}
+                    >
+                      {category.name}
                     </option>
                   ))}
                 </select>
               </div>
 
+              {/* Product name */}
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">
+                <label className="mb-1 block text-xs font-medium text-slate-600">
                   Product name
                 </label>
+
                 <input
                   type="text"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(event) =>
+                    setName(event.target.value)
+                  }
                   placeholder="e.g. iPhone 16 Cover"
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
+                  disabled={loading}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
                 />
               </div>
 
+              {/* Dynamic attributes */}
               {selectedCategory && (
                 <div>
-                  <div className="flex items-center justify-between mb-1">
+                  <div className="mb-1 flex items-center justify-between">
                     <label className="block text-xs font-medium text-slate-600">
-                      Attributes for {selectedCategory.name}
+                      Attributes for{" "}
+                      {selectedCategory.name}
                     </label>
                   </div>
+
                   <div className="space-y-2">
-                    {selectedCategory.metaFields.map((mf) => (
-                      <div key={mf.key}>
-                        <label className="block text-xs font-medium text-slate-600 mb-1">
-                          {mf.label}
-                          {mf.required && (
-                            <span className="text-red-500 ml-0.5">*</span>
-                          )}
-                        </label>
-                        <input
-                          type="text"
-                          value={attributes[mf.key] ?? ""}
-                          onChange={(e) =>
-                            handleChangeAttribute(mf.key, e.target.value)
-                          }
-                          placeholder={mf.label}
-                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
-                        />
-                      </div>
-                    ))}
+                    {selectedCategory.metaFields.map(
+                      (field) => (
+                        <div key={field.key}>
+                          <label className="mb-1 block text-xs font-medium text-slate-600">
+                            {field.label}
+
+                            {field.required && (
+                              <span className="ml-0.5 text-red-500">
+                                *
+                              </span>
+                            )}
+                          </label>
+
+                          <input
+                            type="text"
+                            value={
+                              attributes[
+                                field.key
+                              ] ?? ""
+                            }
+                            onChange={(event) =>
+                              handleChangeAttribute(
+                                field.key,
+                                event.target.value
+                              )
+                            }
+                            placeholder={field.label}
+                            disabled={loading}
+                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
+                          />
+                        </div>
+                      )
+                    )}
                   </div>
                 </div>
               )}
 
+              {/* Error */}
               {error && (
-                <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">
                   {error}
                 </p>
               )}
 
+              {/* Submit */}
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-60"
+                className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {loading
                   ? isEdit
                     ? "Saving..."
                     : "Creating..."
                   : isEdit
-                  ? "Save changes"
-                  : "Create product"}
+                    ? "Save changes"
+                    : "Create product"}
               </button>
             </form>
           </div>

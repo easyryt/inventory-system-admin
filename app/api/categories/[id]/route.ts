@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
-const BACKEND_URL = " https://inventory-system-ecew.onrender.com";
+const BACKEND_URL = "https://inventory-system-ecew.onrender.com";
 
 export async function PUT(
   req: NextRequest,
