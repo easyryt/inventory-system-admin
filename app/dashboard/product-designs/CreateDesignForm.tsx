@@ -26,7 +26,6 @@ type Product = {
   name: string;
   categoryId: Category | string;
   attributes: Record<string, string>;
-  skuBase: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -37,6 +36,7 @@ type ProductDesign = {
   productId: string;
   name: string;
   mode: string;
+  sku: string;
   designCode: string;
   designUrl?: string;
   notes?: string;
@@ -56,6 +56,7 @@ type FormState = {
   productId: string;
   name: string;
   mode: string;
+  sku: string;
   designCode: string;
   designUrl: string;
   notes: string;
@@ -67,25 +68,20 @@ type Props = {
   token: string;
 };
 
-const API_URL = "https://inventory-system-ecew.onrender.com/api/product-designs";
+const API_URL = "http://localhost:5000/api/product-designs";
 const IMAGEKIT_AUTH_URL = "/api/imagekit-auth";
 const IMAGEKIT_PUBLIC_KEY = process.env.NEXT_PUBLIC_IMAGEKIT_PUBLIC_KEY!;
 const IMAGEKIT_UPLOAD_URL = "https://upload.imagekit.io/api/v1/files/upload";
 const IMAGEKIT_FOLDER = "/product-designs";
 const MAX_FILE_BYTES = 300 * 1024;
 
-const MODES = [
-  "SCREEN_PRINT",
-  "HEAT_TRANSFER",
-  "EMBROIDERY",
-  "DTF",
-  "OTHER",
-];
+const MODES = ["SCREEN_PRINT", "HEAT_TRANSFER", "EMBROIDERY", "DTF", "OTHER"];
 
 const emptyForm: FormState = {
   productId: "",
   name: "",
   mode: "SCREEN_PRINT",
+  sku: "",
   designCode: "",
   designUrl: "",
   notes: "",
@@ -94,12 +90,12 @@ const emptyForm: FormState = {
 const getCategoryId = (product: Product) =>
   typeof product.categoryId === "string"
     ? product.categoryId
-    : product.categoryId?._id ?? "";
+    : (product.categoryId?._id ?? "");
 
 const getCategoryName = (product: Product) =>
   typeof product.categoryId === "string"
     ? ""
-    : product.categoryId?.name ?? "";
+    : (product.categoryId?.name ?? "");
 
 const loadImage = (file: File) =>
   new Promise<HTMLImageElement>((resolve, reject) => {
@@ -252,7 +248,6 @@ export default function CreateDesignForm({
 
         return [
           product.name,
-          product.skuBase,
           getCategoryName(product),
           product._id,
         ].some((value) => value.toLowerCase().includes(query));
@@ -340,9 +335,7 @@ export default function CreateDesignForm({
     }, 0);
   };
 
-  const onProductSearchKeyDown = (
-    event: KeyboardEvent<HTMLInputElement>,
-  ) => {
+  const onProductSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown") {
       event.preventDefault();
       setProductPickerOpen(true);
@@ -395,9 +388,7 @@ export default function CreateDesignForm({
         `Image uploaded: ${checkedImage.width} × ${checkedImage.height}px.`,
       );
     } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "Image upload failed.",
-      );
+      setError(cause instanceof Error ? cause.message : "Image upload failed.");
     } finally {
       setUploading(false);
       setUploadProgress(0);
@@ -433,7 +424,9 @@ export default function CreateDesignForm({
       setGalleryImages(Array.isArray(data.images) ? data.images : []);
     } catch (cause) {
       setGalleryError(
-        cause instanceof Error ? cause.message : "Could not load image gallery.",
+        cause instanceof Error
+          ? cause.message
+          : "Could not load image gallery.",
       );
     } finally {
       setGalleryLoading(false);
@@ -451,9 +444,7 @@ export default function CreateDesignForm({
     setMessage("Image selected from gallery.");
   };
 
-  const uploadGalleryImage = async (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
+  const uploadGalleryImage = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
 
     if (galleryImageInputRef.current) {
@@ -476,8 +467,13 @@ export default function CreateDesignForm({
       return;
     }
 
-    if (!form.name.trim() || !form.mode || !form.designCode.trim()) {
-      setError("Design name, mode, and design code are required.");
+    if (
+      !form.name.trim() ||
+      !form.mode ||
+      !form.sku.trim() ||
+      !form.designCode.trim()
+    ) {
+      setError("Design name, mode, SKU, and design code are required.");
       return;
     }
 
@@ -485,6 +481,7 @@ export default function CreateDesignForm({
       productId: form.productId,
       name: form.name.trim(),
       mode: form.mode,
+      sku: form.sku.trim().toUpperCase(),
       designCode: form.designCode.trim().toUpperCase(),
       designUrl: form.designUrl.trim(),
       notes: form.notes.trim(),
@@ -532,9 +529,7 @@ export default function CreateDesignForm({
   };
 
   const editDesign = (design: ProductDesign) => {
-    const product = safeProducts.find(
-      (item) => item._id === design.productId,
-    );
+    const product = safeProducts.find((item) => item._id === design.productId);
 
     setEditingId(design._id);
 
@@ -542,6 +537,7 @@ export default function CreateDesignForm({
       productId: design.productId,
       name: design.name ?? "",
       mode: design.mode ?? "SCREEN_PRINT",
+      sku: design.sku ?? "",
       designCode: design.designCode ?? "",
       designUrl: design.designUrl ?? "",
       notes: design.notes ?? "",
@@ -679,7 +675,7 @@ export default function CreateDesignForm({
                       {product.name}
                     </p>
                     <p className="mt-1 text-[11px] text-slate-500">
-                      SKU: {product.skuBase || "—"} · Category:{" "}
+                       Category:{" "}
                       {getCategoryName(product) || "—"}
                     </p>
                   </button>
@@ -696,8 +692,7 @@ export default function CreateDesignForm({
                 {selectedProduct.name}
               </p>
               <p className="mt-1 text-xs text-emerald-700">
-                Category: {getCategoryName(selectedProduct) || "—"} · SKU:{" "}
-                {selectedProduct.skuBase || "—"}
+                Category: {getCategoryName(selectedProduct) || "—"} 
               </p>
             </div>
 
@@ -745,6 +740,20 @@ export default function CreateDesignForm({
                   </option>
                 ))}
               </select>
+            </label>
+
+            <label className="block">
+              <span className="text-xs font-medium text-slate-600">SKU</span>
+
+              <input
+                value={form.sku}
+                onChange={(event) =>
+                  change("sku", event.target.value.toUpperCase())
+                }
+                disabled={!form.productId}
+                placeholder="e.g. TS-BUTTERFLY-BLUE"
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm uppercase disabled:bg-slate-100"
+              />
             </label>
 
             <label className="block">
@@ -897,6 +906,7 @@ export default function CreateDesignForm({
                 <tr>
                   <th className="px-3 py-2">Image</th>
                   <th className="px-3 py-2">Name</th>
+                  <th className="px-3 py-2">SKU</th>
                   <th className="px-3 py-2">Mode</th>
                   <th className="px-3 py-2">Code</th>
                   <th className="px-3 py-2">Actions</th>
@@ -917,6 +927,7 @@ export default function CreateDesignForm({
                       )}
                     </td>
                     <td className="px-3 py-2">{design.name}</td>
+                    <td className="px-3 py-2">{design.sku}</td>
                     <td className="px-3 py-2">{design.mode}</td>
                     <td className="px-3 py-2 font-mono">{design.designCode}</td>
                     <td className="px-3 py-2">
@@ -934,9 +945,7 @@ export default function CreateDesignForm({
                           disabled={deletingId === design._id}
                           className="rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
                         >
-                          {deletingId === design._id
-                            ? "Deleting..."
-                            : "Delete"}
+                          {deletingId === design._id ? "Deleting..." : "Delete"}
                         </button>
                       </div>
                     </td>

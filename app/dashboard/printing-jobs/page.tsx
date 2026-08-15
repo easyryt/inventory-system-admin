@@ -30,7 +30,7 @@ export default async function PrintingJobsPage() {
     // Fetch Products
     try {
       const res = await fetch(
-        " https://inventory-system-ecew.onrender.com/api/products",
+        " http://localhost:5000/api/products",
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -55,7 +55,7 @@ export default async function PrintingJobsPage() {
     // Fetch Categories
     try {
       const res = await fetch(
-        " https://inventory-system-ecew.onrender.com/api/categories",
+        " http://localhost:5000/api/categories",
         {
           headers: {
             Authorization: `Bearer ${token}`,

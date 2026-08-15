@@ -5,7 +5,7 @@ import InventoryDetail, {
   type InventoryRow,
 } from "../InventoryDetail";
 
-const API = "https://inventory-system-ecew.onrender.com/api";
+const API = "http://localhost:5000/api";
 
 type BackendProduct = {
   _id: string;

@@ -20,7 +20,6 @@ type Product = {
   name: string;
   categoryId: Category;
   attributes: Record<string, string>;
-  skuBase: string;
   isActive: boolean;
   createdAt: string;
 };
@@ -34,7 +33,7 @@ export default async function ProductsPage() {
 
   if (token) {
     // Get categories
-    const catRes = await fetch(" https://inventory-system-ecew.onrender.com/api/categories", {
+    const catRes = await fetch(" http://localhost:5000/api/categories", {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });
@@ -46,7 +45,7 @@ export default async function ProductsPage() {
     }
 
     // Get products
-    const prodRes = await fetch(" https://inventory-system-ecew.onrender.com/api/products", {
+    const prodRes = await fetch(" http://localhost:5000/api/products", {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });

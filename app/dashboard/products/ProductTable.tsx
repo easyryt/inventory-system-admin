@@ -21,7 +21,6 @@ type Product = {
   name: string;
   categoryId: Category;
   attributes: Record<string, string>;
-  skuBase: string;
   isActive: boolean;
   createdAt: string;
 };
@@ -41,7 +40,6 @@ export default function ProductTable({ categories, products }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [categoryId, setCategoryId] = useState<string>("");
   const [name, setName] = useState("");
-  const [skuBase, setSkuBase] = useState("");
   const [attributes, setAttributes] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -60,8 +58,7 @@ export default function ProductTable({ categories, products }: Props) {
       const catName = p.categoryId?.name ?? "";
       return (
         p.name.toLowerCase().includes(term) ||
-        catName.toLowerCase().includes(term) ||
-        p.skuBase.toLowerCase().includes(term)
+        catName.toLowerCase().includes(term)
       );
     });
   }, [items, search]);
@@ -71,7 +68,6 @@ export default function ProductTable({ categories, products }: Props) {
     setEditingId(null);
     setCategoryId("");
     setName("");
-    setSkuBase("");
     setAttributes({});
     setError("");
     setOpen(true);
@@ -82,7 +78,6 @@ export default function ProductTable({ categories, products }: Props) {
     setEditingId(prod._id);
     setCategoryId(prod.categoryId?._id || "");
     setName(prod.name);
-    setSkuBase(prod.skuBase);
     setAttributes(prod.attributes || {});
     setError("");
     setOpen(true);
@@ -113,10 +108,6 @@ export default function ProductTable({ categories, products }: Props) {
       setError("Product name is required");
       return;
     }
-    if (!skuBase.trim()) {
-      setError("SKU base is required");
-      return;
-    }
 
     if (selectedCategory) {
       for (const mf of selectedCategory.metaFields || []) {
@@ -138,7 +129,6 @@ export default function ProductTable({ categories, products }: Props) {
         categoryId,
         name: name.trim(),
         attributes,
-        skuBase: skuBase.trim(),
       };
 
       const url = isEdit ? `/api/products/${editingId}` : "/api/products";
@@ -200,18 +190,12 @@ export default function ProductTable({ categories, products }: Props) {
     <>
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
-          <div>
-            <h2 className="text-sm font-semibold">Product list</h2>
-            <p className="text-xs text-slate-500">
-              Products with category-specific attributes and SKU base.
-            </p>
-          </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search product / category / SKU..."
+              placeholder="Search product / category..."
               className="w-full sm:w-64 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
             />
             <button
@@ -235,9 +219,6 @@ export default function ProductTable({ categories, products }: Props) {
                 </th>
                 <th className="px-3 py-2 text-left font-medium text-slate-500">
                   Attributes
-                </th>
-                <th className="px-3 py-2 text-left font-medium text-slate-500">
-                  SKU base
                 </th>
                 <th className="px-3 py-2 text-left font-medium text-slate-500">
                   Actions
@@ -266,7 +247,6 @@ export default function ProductTable({ categories, products }: Props) {
                       ))}
                     </div>
                   </td>
-                  <td className="px-3 py-2">{p.skuBase}</td>
                   <td className="px-3 py-2 space-x-2">
                     <button
                       onClick={() => openEditModal(p)}
@@ -352,19 +332,6 @@ export default function ProductTable({ categories, products }: Props) {
                   onChange={(e) => setName(e.target.value)}
                   placeholder="e.g. iPhone 16 Cover"
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">
-                  SKU base
-                </label>
-                <input
-                  type="text"
-                  value={skuBase}
-                  onChange={(e) => setSkuBase(e.target.value)}
-                  placeholder="e.g. MC-APPLE-IP16"
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs uppercase tracking-wide focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
                 />
               </div>
 
