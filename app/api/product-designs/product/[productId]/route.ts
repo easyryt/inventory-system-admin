@@ -1,7 +1,7 @@
 // app/api/product-designs/product/[productId]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
-const BACKEND_URL = " http://localhost:5000";
+const BACKEND_URL = " https://inventory-system-ecew.onrender.com";
 
 export async function GET(
   req: NextRequest,

@@ -4,7 +4,7 @@ import PurchaseOrderPage, {
   type ProductForPurchaseOrder,
 } from "./PurchaseOrderPage";
 
-const API = `${process.env.BACKEND_URL || "http://localhost:5000"}/api`;
+const API = `${process.env.BACKEND_URL || "https://inventory-system-ecew.onrender.com"}/api`;
 
 export default async function PurchaseOrdersPage() {
   const token = (await cookies()).get("token")?.value;

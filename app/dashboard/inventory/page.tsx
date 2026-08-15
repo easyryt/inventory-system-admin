@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import InventoryList, { type InventoryProduct } from "./InventoryList";
 
-const API = "http://localhost:5000/api";
+const API = "https://inventory-system-ecew.onrender.com/api";
 
 export default async function InventoryIndexPage() {
   const token = (await cookies()).get("token")?.value;

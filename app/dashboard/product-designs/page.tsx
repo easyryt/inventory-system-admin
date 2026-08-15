@@ -25,7 +25,7 @@ type Product = {
   updatedAt: string;
 };
 
-const API_URL = "http://localhost:5000/api";
+const API_URL = "https://inventory-system-ecew.onrender.com/api";
 
 const getErrorMessage = (data: unknown, fallback: string) => {
   if (
