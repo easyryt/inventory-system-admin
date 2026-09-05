@@ -760,7 +760,7 @@ export default function BarcodeManager({
                     return `
                       <div class="label">
                         <div class="model-name">
-                          ${escapeHtml(selected.productName)}
+                          ${escapeHtml(selected.productName)} - ${escapeHtml(selected.designCode)}
                         </div>
                         <div class="qr">
                           ${qr}
