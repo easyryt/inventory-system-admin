@@ -759,6 +759,9 @@ export default function BarcodeManager({
 
                     return `
                       <div class="label">
+                        <div class="model-name">
+                          ${escapeHtml(selected.productName)}
+                        </div>
                         <div class="qr">
                           ${qr}
                         </div>
@@ -893,6 +896,19 @@ export default function BarcodeManager({
                   0.15mm
                   dashed
                   #d1d5db;
+              }
+
+              .model-name {
+                width: 100%;
+                margin-bottom: 0.2mm;
+                flex-shrink: 0;
+                text-align: center;
+                font-size: 5pt;
+                font-weight: 700;
+                line-height: 1.1;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
               }
 
               .qr {
