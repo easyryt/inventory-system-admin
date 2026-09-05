@@ -954,7 +954,7 @@ export default function BarcodeManager({
                   monospace;
 
                 font-size:
-                  3.1pt;
+                  4.5pt;
 
                 font-weight:
                   700;
