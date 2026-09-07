@@ -1,6 +1,13 @@
 "use client";
 
+import { QRCodeSVG } from "qrcode.react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { useCallback, useEffect, useState } from "react";
+
+const LABELS_PER_ROW = 4;
+const LABEL_SIZE_MM = 25;
+const LABEL_GAP_MM = 1;
+const ROLL_WIDTH_MM = 104;
 
 type CategoryPopulated = {
   _id: string;
@@ -25,7 +32,18 @@ type PrintingJob = {
   status: "PENDING" | "COMPLETED" | "CANCELLED";
   notes?: string;
   inventoryAdded?: boolean;
+  barcodeGenerationStatus?:
+    | "NOT_READY"
+    | "PENDING"
+    | "GENERATING"
+    | "GENERATED"
+    | "LEGACY_UNLINKED";
   createdAt: string;
+};
+
+type BarcodeRow = {
+  _id: string;
+  code: string;
 };
 
 // Extract human‑readable name from populated or plain ID
@@ -46,6 +64,168 @@ const getCategoryName = (value: PopulatedValue | string | undefined) => {
   return value.categoryId?.name || "-";
 };
 
+const escapeHtml = (value: string) =>
+  String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+
+const createPrintHtml = (job: PrintingJob, barcodes: BarcodeRow[]) => {
+  const labelRows = Array.from(
+    { length: Math.ceil(barcodes.length / LABELS_PER_ROW) },
+    (_, rowIndex) => {
+      const start = rowIndex * LABELS_PER_ROW;
+      const labels = barcodes
+        .slice(start, start + LABELS_PER_ROW)
+        .map((barcode) => {
+          const qr = renderToStaticMarkup(
+            <QRCodeSVG
+              value={barcode.code}
+              size={92}
+              level="L"
+              includeMargin={false}
+            />,
+          );
+
+          return `
+            <div class="label">
+              <div class="model-name">
+                ${escapeHtml(getName(job.productId))} - ${escapeHtml(job.designCode)}
+              </div>
+              <div class="qr">${qr}</div>
+              <code>${escapeHtml(barcode.code)}</code>
+            </div>
+          `;
+        })
+        .join("");
+
+      return `
+        <section class="print-row">
+          <div class="grid">${labels}</div>
+        </section>
+      `;
+    },
+  ).join("");
+
+  return `
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="UTF-8" />
+        <title>Barcodes - ${escapeHtml(getName(job.productId))}</title>
+        <style>
+          @page {
+            size: ${ROLL_WIDTH_MM}mm ${LABEL_SIZE_MM}mm;
+            margin: 0;
+          }
+
+          * {
+            box-sizing: border-box;
+          }
+
+          html,
+          body {
+            margin: 0;
+            padding: 0;
+            background: white;
+            font-family: Arial, sans-serif;
+          }
+
+          body {
+            width: ${ROLL_WIDTH_MM}mm;
+          }
+
+          .print-row {
+            width: ${ROLL_WIDTH_MM}mm;
+            height: ${LABEL_SIZE_MM}mm;
+            break-after: page;
+            page-break-after: always;
+          }
+
+          .print-row:last-child {
+            break-after: auto;
+            page-break-after: auto;
+          }
+
+          .grid {
+            display: grid;
+            grid-template-columns: repeat(${LABELS_PER_ROW}, ${LABEL_SIZE_MM}mm);
+            column-gap: ${LABEL_GAP_MM}mm;
+          }
+
+          .label {
+            width: ${LABEL_SIZE_MM}mm;
+            height: ${LABEL_SIZE_MM}mm;
+            padding: 0.7mm;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            border: 0.15mm dashed #d1d5db;
+          }
+
+          .model-name {
+            width: 100%;
+            margin-bottom: 0.2mm;
+            flex-shrink: 0;
+            text-align: center;
+            font-size: 5pt;
+            font-weight: 700;
+            line-height: 1.1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+
+          .qr {
+            width: 19mm;
+            height: 19mm;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          }
+
+          .qr svg {
+            width: 18mm !important;
+            height: 18mm !important;
+          }
+
+          .label code {
+            width: 100%;
+            margin-top: 0.4mm;
+            overflow: hidden;
+            text-align: center;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-family: "Courier New", monospace;
+            font-size: 4.5pt;
+            font-weight: 700;
+          }
+
+          @media print {
+            .label {
+              border: none;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        ${labelRows}
+        <script>
+          window.addEventListener("load", function () {
+            setTimeout(function () {
+              window.print();
+            }, 300);
+          });
+        </script>
+      </body>
+    </html>
+  `;
+};
+
 const getErrorMessage = async (res: Response, fallback: string) => {
   const data = await res.json().catch(() => ({}));
   return data.message || fallback;
@@ -61,6 +241,9 @@ export default function PrintingJobsList() {
   const [editNotes, setEditNotes] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const [printingId, setPrintingId] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
 
   const loadJobs = useCallback(async () => {
     try {
@@ -105,6 +288,7 @@ export default function PrintingJobsList() {
     setEditStatus(job.status);
     setEditNotes(job.notes || "");
     setError("");
+    setMessage("");
   };
 
   const cancelEdit = () => {
@@ -156,6 +340,7 @@ export default function PrintingJobsList() {
     try {
       setDeletingId(job._id);
       setError("");
+      setMessage("");
 
       const res = await fetch(`/api/printing-jobs/${job._id}`, {
         method: "DELETE",
@@ -174,6 +359,117 @@ export default function PrintingJobsList() {
       );
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const generateBarcodes = async (job: PrintingJob) => {
+    try {
+      setGeneratingId(job._id);
+      setError("");
+      setMessage("");
+
+      const res = await fetch("/api/barcodes", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          printingJobId: job._id,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.message || "Could not generate barcodes");
+      }
+
+      setMessage(
+        data.message ||
+          `${data.barcodeCount || data.barcodes?.length || job.quantity} barcode(s) generated successfully.`,
+      );
+
+      await loadJobs();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not generate barcodes",
+      );
+    } finally {
+      setGeneratingId(null);
+    }
+  };
+
+  const printAllBarcodes = async (job: PrintingJob) => {
+    setError("");
+    setMessage("");
+
+    const popup = window.open("", "_blank", "width=1100,height=850");
+
+    if (!popup) {
+      setError("Popup blocked. Allow popups to print barcode labels.");
+      return;
+    }
+
+    popup.document.write(`
+      <!doctype html>
+      <html>
+        <head><title>Preparing barcode labels...</title></head>
+        <body style="font-family: Arial, sans-serif; padding: 24px;">
+          Preparing barcode labels...
+        </body>
+      </html>
+    `);
+    popup.document.close();
+
+    try {
+      setPrintingId(job._id);
+
+      const res = await fetch("/api/barcodes", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          printingJobId: job._id,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.message || "Could not load barcodes for printing");
+      }
+
+      const barcodes = Array.isArray(data.barcodes)
+        ? data.barcodes.filter(
+            (barcode: BarcodeRow) =>
+              typeof barcode?._id === "string" &&
+              typeof barcode?.code === "string" &&
+              barcode.code.length > 0,
+          )
+        : [];
+
+      if (barcodes.length === 0) {
+        throw new Error("No barcodes are available for this printing job");
+      }
+
+      if (popup.closed) {
+        throw new Error("The barcode print window was closed");
+      }
+
+      popup.document.open();
+      popup.document.write(createPrintHtml(job, barcodes));
+      popup.document.close();
+      popup.focus();
+    } catch (err) {
+      if (!popup.closed) popup.close();
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not prepare barcode labels",
+      );
+    } finally {
+      setPrintingId(null);
     }
   };
 
@@ -200,6 +496,12 @@ export default function PrintingJobsList() {
       {error && (
         <div className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700">
           {error}
+        </div>
+      )}
+
+      {message && (
+        <div className="mb-4 rounded-md bg-emerald-50 p-3 text-sm text-emerald-700">
+          {message}
         </div>
       )}
 
@@ -240,6 +542,16 @@ export default function PrintingJobsList() {
                 const isEditing = editingId === job._id;
                 const isFinalStatus =
                   job.status === "COMPLETED" || job.status === "CANCELLED";
+                const isGeneratingBarcodes =
+                  generatingId === job._id ||
+                  job.barcodeGenerationStatus === "GENERATING";
+                const isBarcodeGenerated =
+                  job.barcodeGenerationStatus === "GENERATED";
+                const isPrintingBarcodes = printingId === job._id;
+                const canGenerateBarcodes =
+                  job.status === "COMPLETED" &&
+                  job.inventoryAdded &&
+                  job.barcodeGenerationStatus === "PENDING";
 
                 return (
                   <tr key={job._id} className="border-b border-slate-100">
@@ -328,7 +640,46 @@ export default function PrintingJobsList() {
                           </button>
                         </div>
                       ) : (
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
+                          {job.status === "COMPLETED" &&
+                            job.inventoryAdded && (
+                              <button
+                                onClick={() => generateBarcodes(job)}
+                                disabled={
+                                  generatingId !== null ||
+                                  printingId !== null ||
+                                  !canGenerateBarcodes
+                                }
+                                title={
+                                  isBarcodeGenerated
+                                    ? "Barcodes have already been generated"
+                                    : canGenerateBarcodes
+                                      ? "Generate barcodes for this printing job"
+                                      : "Barcodes are not ready to generate"
+                                }
+                                className="rounded border border-emerald-300 px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {isGeneratingBarcodes
+                                  ? "Generating..."
+                                  : isBarcodeGenerated
+                                    ? "Generated"
+                                    : "Generate Barcode"}
+                              </button>
+                            )}
+
+                          {isBarcodeGenerated && (
+                            <button
+                              onClick={() => printAllBarcodes(job)}
+                              disabled={
+                                generatingId !== null || printingId !== null
+                              }
+                              title="Print every barcode from this printing job"
+                              className="rounded bg-slate-800 px-2 py-1 text-xs text-white hover:bg-slate-900 disabled:cursor-not-allowed disabled:bg-slate-400"
+                            >
+                              {isPrintingBarcodes ? "Preparing..." : "Print All"}
+                            </button>
+                          )}
+
                           <button
                             onClick={() => startEdit(job)}
                             className="rounded border border-indigo-300 px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-50"
